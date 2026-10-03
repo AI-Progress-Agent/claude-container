@@ -16,7 +16,12 @@ FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2
 
 # git, gh and ripgrep are what Claude reaches for. jq and perl run the host's
 # hooks. xz-utils unpacks the Node that mise downloads.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+#
+# The upgrade brings in Debian's security fixes for the packages already in
+# the base image, such as libc and OpenSSL. The digest above moves only with
+# a pull request, and the weekly rebuild needs the fixes without one.
+RUN apt-get update && apt-get upgrade -y \
+ && apt-get install -y --no-install-recommends \
       bash-completion ca-certificates curl git gnupg jq less openssh-client \
       perl procps ripgrep unzip xz-utils \
  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \

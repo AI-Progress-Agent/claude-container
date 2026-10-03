@@ -13,7 +13,9 @@ user=$1
 home=$2
 shift 2
 
-useradd --create-home --home-dir "$home" --shell /bin/bash --uid 1000 "$user"
+# --badname takes a macOS short name that Debian would refuse, such as one
+# with a dot in it.
+useradd --badname --create-home --home-dir "$home" --shell /bin/bash --uid 1000 "$user"
 
 # gh finds an extension only in the user's home. Link the base image's
 # gh-stack in there, with the manifest gh writes for an extension it
