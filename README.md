@@ -39,9 +39,17 @@ Settings stack in three levels, and a later level wins:
 3. Your uncommitted files: `docker/cc.local` and `docker/compose.local.yaml`.
    See [Your machine's own setup](#your-machines-own-setup).
 
-One exception: the launcher reads `docker/cc.local` after it has named the
-project and found the sibling repos. So `docker/cc.local` cannot change
-`project_name` or `writable_siblings`. Set those in `docker/kit.sh`.
+Three limits apply to `docker/cc.local`:
+
+- The launcher reads it after it has named the project and found the sibling
+  repos. So it cannot change `project_name` or `writable_siblings`. Set those
+  in `docker/kit.sh`.
+- `docker/cc build` and `docker/cc upgrade` do not read it.
+- The launcher sets `HOST_HOME`, `REPO`, `HOST_USER`, `PROJECT_KEY` and
+  `PROJECT_NAME` for Compose before it reads the file. An export of one there
+  reaches Compose, but not what the launcher has already done with it. So
+  `export PROJECT_NAME=x` renames the image but not the volumes. Leave those
+  five alone.
 
 ## Set up a repo
 
@@ -68,12 +76,12 @@ project and found the sibling repos. So `docker/cc.local` cannot change
    rest of the repo stays out of the image.
 4. Add `docker/kit.sh` if a default does not fit. Each setting is optional:
 
-   | Setting              | Default                                                       | Sets                                                                                                |
-   | -------------------- | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-   | `project_name`       | the main clone's directory name in lower case, plus `-claude` | the image name and the volumes, the login among them                                                |
-   | `writable_siblings`  | none                                                          | the sibling repos that mount writable, as a bash array of directory names, such as `(plugins-repo)` |
-   | `start_commands`     | `true`, which does nothing                                    | shell commands run inside at each start, before Claude                                              |
-   | `agent_browser_port` | the `cdp` port in the repo's `agent-browser.json`             | the Mac Chrome port that `agent-browser` drives                                                     |
+   | Setting              | Default                                                                                                                                    | Sets                                                                                                |
+   | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+   | `project_name`       | the main clone's directory name plus `-claude`, in lower case, with each character other than `a-z`, `0-9`, `_` and `-` turned into a dash | the image name and the volumes, the login among them                                                |
+   | `writable_siblings`  | none                                                                                                                                       | the sibling repos that mount writable, as a bash array of directory names, such as `(plugins-repo)` |
+   | `start_commands`     | `true`, which does nothing                                                                                                                 | shell commands run inside at each start, before Claude                                              |
+   | `agent_browser_port` | the `cdp` port in the repo's `agent-browser.json`                                                                                          | the Mac Chrome port that `agent-browser` drives                                                     |
 
    Two repos with one `project_name` share a login and an image, so give each
    repo its own. A worktree takes its main clone's name, so it shares that
@@ -96,12 +104,10 @@ project and found the sibling repos. So `docker/cc.local` cannot change
    ```
 
    Docker creates a volume's directory as root unless the image already has
-   it. So name the directory as an extra argument to `add-user`, which
-   creates it owned by your user:
-
-   ```dockerfile
-   RUN /usr/local/libexec/claude-container/add-user "$HOST_USER" "$HOST_HOME" "$REPO/node_modules"
-   ```
+   it. So add the directory to the `add-user` line that step 2 copied from
+   [`example/docker/Dockerfile`](example/docker/Dockerfile), as an extra
+   argument such as `"$REPO/node_modules"`. `add-user` creates it owned by
+   your user.
 
 6. Add the per-person files to `.gitignore`:
 
@@ -139,12 +145,6 @@ Every run starts a fresh container. It runs the repo's `start_commands`, then
 your `local_setup`, and then starts Claude. What lasts between runs is in
 Docker volumes and in the Mac paths the container mounts.
 
-The container runs with no Linux capabilities and with `no-new-privileges`,
-so nothing inside can become root. It is limited to 8 GB of memory and 2048
-processes, so a runaway process cannot starve Docker Desktop's VM. These
-settings are in [`kit/compose.yaml`](kit/compose.yaml), and a repo's
-`docker/compose.repo.yaml` can override the limits.
-
 ## Upgrading
 
 A new Claude Code comes with a new base image. Each Monday, CI rebuilds the
@@ -153,9 +153,12 @@ are at least seven days old. Dependabot then opens a pull request that moves
 the repo's `FROM` line. To upgrade, merge that pull request and run
 `docker/cc build`.
 
-`docker/cc upgrade` moves only what the repo's own `mise.toml` and your
-`mise.local.toml` install as `latest`. Claude and the base image's tools stay
-at the versions the `FROM` line pins.
+`docker/cc upgrade` rebuilds every step of the repo's `docker/Dockerfile`
+without the cache. It does not pull a new base image. So the repo's apt
+installs move, and so does each tool in the repo's `mise.toml` and your
+`mise.local.toml` whose version is not exact, such as `latest` or
+`node = "22"`. Claude and the base image's tools stay at the versions the
+`FROM` line pins.
 
 Autoupdate is off inside. `claude update` still downloads a new Claude, about
 245 MB, into `~/.local/share/claude`. But that directory goes when the
@@ -246,6 +249,12 @@ Some things stay on the Mac:
 Plugins mount read-only, so a plugin update fails inside, and so does a
 plugin that saves its own state.
 
+The container runs with no Linux capabilities and with `no-new-privileges`,
+so nothing inside can become root. Memory and process limits keep a runaway
+process from starving Docker Desktop's VM. These settings are in
+[`kit/compose.yaml`](kit/compose.yaml), and a repo's
+`docker/compose.repo.yaml` can override the limits.
+
 ### The browser
 
 `agent-browser` inside drives a Chrome on the Mac. Use it for a page that
@@ -306,14 +315,18 @@ The launcher runs `notify_host` this way:
 notify_host() { terminal-notifier -title Claude -message "Waiting in ${PWD##*/}"; }
 ```
 
-Your Mac's own hooks may call `cc-notify.mjs` by name too. Inside, the image
-puts a `cc-notify.mjs` ahead of `~/bin` on the `PATH` that reads its input and
-does nothing, so those hooks neither fail nor notify twice.
-
 The directory and the loop go when the container does. A container started
 without `docker/cc` has no `/run/cc-notify`, so the hooks drop the event.
 If an admin at your company pushes managed settings to Claude, those
 replace the image's file, and nothing is forwarded.
+
+Your Mac's own hooks may call `cc-notify.mjs` by name too. The base image
+installs a stand-in at `/usr/local/bin/cc-notify.mjs`, which reads its input
+and does nothing. The `PATH` in
+[`example/docker/Dockerfile`](example/docker/Dockerfile) puts `~/bin` last,
+after `/usr/local/bin`. So the stand-in wins over a real `cc-notify.mjs` in
+`~/bin`, and those hooks neither fail nor notify twice. A repo's
+`docker/Dockerfile` that sets its own `PATH` has to keep that order.
 
 ## GitHub operations
 
@@ -575,7 +588,7 @@ The repo has these parts:
 | `stub/cc`    | the `docker/cc` each repo copies                                                                                  |
 | `example/`   | a repo layer in miniature, which the smoke test builds                                                            |
 | `test/`      | the tests                                                                                                         |
-| `.github/`   | the CI and release workflows, and Dependabot's config for the actions and the Debian image                        |
+| `.github/`   | the CI and release workflows, and Dependabot's config (see [Releases](#releases))                                 |
 
 Run the checks with mise:
 
