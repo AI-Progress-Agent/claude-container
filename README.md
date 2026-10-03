@@ -1,5 +1,7 @@
 # claude-container
 
+[![ci](https://github.com/AI-Progress-Agent/claude-container/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/AI-Progress-Agent/claude-container/actions/workflows/ci.yml?query=branch%3Amain)
+
 `claude-container` runs Claude Code for a repo in a Linux container that
 mirrors your Mac's Claude setup. Your global `CLAUDE.md`, settings, hooks,
 output styles, skills, agents, plugins, status line and git identity all work
