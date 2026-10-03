@@ -1,10 +1,10 @@
 #!/bin/sh
-# Hands one hook event to the host. docker/cc mounts a directory at
+# Hands one hook event to the host. The launcher mounts a directory at
 # /run/cc-notify and watches it on the host. Each file dropped there becomes
 # a notification on the host. A container started some other way has no such
 # directory, so the event is dropped. A hook that fails would show as an
 # error in Claude, so every path exits 0. CC_NOTIFY_DIR points it elsewhere,
-# for docker/notify/test-forward.sh.
+# for the kit's test/forward.sh.
 dir=${CC_NOTIFY_DIR:-/run/cc-notify}
 if [ ! -d "$dir" ]; then
   cat >/dev/null

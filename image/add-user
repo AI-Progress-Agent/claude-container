@@ -1,0 +1,28 @@
+#!/bin/sh
+# Runs as root in a repo's thin layer, once: adds the host's user, named $1,
+# with the host's home path, $2. macOS file sharing remaps ownership, so the
+# uid itself does not matter.
+#
+# It also makes, as that user, the directories the launcher mounts volumes
+# and host files into. Docker would otherwise create each as root: a volume's
+# root, and the parents of the host files compose.yaml mounts inside one. A
+# repo names its own such directories as more arguments, such as the
+# directory a node_modules volume mounts into.
+set -eu
+user=$1
+home=$2
+shift 2
+
+useradd --create-home --home-dir "$home" --shell /bin/bash --uid 1000 "$user"
+
+# gh finds an extension only in the user's home. Link the base image's
+# gh-stack in there, with the manifest gh writes for an extension it
+# installed from a release.
+ext=$home/.local/share/gh/extensions/gh-stack
+mkdir -p "$ext"
+ln -s /usr/local/share/gh-stack/gh-stack "$ext/gh-stack"
+printf 'owner: github\nname: gh-stack\nhost: github.com\ntag: %s\nispinned: true\npath: %s\n' \
+  "$(cat /usr/local/share/gh-stack/version)" "$ext/gh-stack" >"$ext/manifest.yml"
+
+mkdir -p "$home/.claude/projects" "$home/.claude/state" "$home/.config" "$@"
+chown -R "$user:" "$home" "$@"

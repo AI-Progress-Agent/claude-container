@@ -1,0 +1,5 @@
+# The base image needs these files. Everything else stays out of the build
+# context.
+*
+!image/
+!kit/

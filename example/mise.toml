@@ -1,0 +1,5 @@
+# The example repo's tools. The base image already has Node, so mise reuses
+# it. shellcheck is new, so the thin layer installs it for the user.
+[tools]
+node = "lts"
+shellcheck = "0.11"

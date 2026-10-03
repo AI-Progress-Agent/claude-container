@@ -1,0 +1,14 @@
+#!/bin/sh
+# Prints the newest release of npm package $1 that is at least $2 days old.
+# The npm registry records when each version was published, and both Claude
+# Code and mise publish every release there. A version with a suffix, such as
+# 1.2.0-beta.1, is a prerelease and is skipped. The base Dockerfile runs this
+# when CI passes no version. CI runs it to pick the versions it passes.
+set -eu
+cutoff=$(date -u -d "$2 days ago" +%Y-%m-%dT%H:%M:%SZ)
+curl -fsSL "https://registry.npmjs.org/$1" | jq -er --arg cutoff "$cutoff" '
+  .time
+  | to_entries
+  | map(select((.key | test("^[0-9]+\\.[0-9]+\\.[0-9]+$")) and .value < $cutoff))
+  | max_by(.key | split(".") | map(tonumber))
+  | .key'
