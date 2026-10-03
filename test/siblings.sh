@@ -33,6 +33,7 @@ clone "$work/url-sibling" ssh://git@github.com/Program-Org/url-sibling.git
 clone "$work/other-client" git@github.com:other-client/app.git
 clone "$work/other-host" https://gitlab.com/Program-Org/app.git
 clone "$work/no-origin" ""
+clone "$work/no-origin-sibling" ""
 clone "$work/rw-sibling" git@github.com:Program-Org/rw-sibling.git
 clone "$work/rw-other-client" git@github.com:other-client/rw-other-client.git
 rm -rf "$work/rw-sibling/.git/hooks"
@@ -65,6 +66,15 @@ done
 # A writable sibling without .git/hooks gets one made on the host, so the
 # read-only mount has a source.
 [ -d "$work/rw-sibling/.git/hooks" ] || fail "rw-sibling has no .git/hooks"
+
+# A clone whose origin names no owner, such as a local path, mounts nothing:
+# the siblings with no origin would otherwise match it.
+git -C "$work/no-origin" remote add origin /srv/git/no-origin.git
+repo=$work/no-origin
+mounts=()
+collect_sibling_repos
+[ ${#mounts[@]} -eq 0 ] || fail "with a local-path origin, mounts were: ${mounts[*]}"
+git -C "$work/no-origin" remote remove origin
 
 # A clone with no origin mounts nothing.
 repo=$work/no-origin

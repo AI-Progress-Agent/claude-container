@@ -32,13 +32,21 @@ tag=${base#*:}
 kit=${XDG_CACHE_HOME:-$HOME/.cache}/claude-container/${tag%%@*}
 if [ ! -x "$kit/cc" ]; then
   # Copy into a new directory, then rename it, so a failed copy leaves no
-  # kit behind for the next run to trust.
+  # kit behind for the next run to trust. The trap cleans up after a failure
+  # or a ctrl-c.
   mkdir -p "$(dirname "$kit")"
   tmp=$(mktemp -d "$kit.XXXXXX")
+  id=
+  trap 'rm -rf "$tmp"; [ -z "$id" ] || docker rm "$id" >/dev/null' EXIT
   id=$(docker create "$base")
-  docker cp "$id:/opt/kit/." "$tmp" || { docker rm "$id" >/dev/null; rm -rf "$tmp"; exit 1; }
+  docker cp "$id:/opt/kit/." "$tmp"
+  # Another run may have finished first. Its kit is the same, so keep it.
+  if [ ! -x "$kit/cc" ]; then
+    rm -rf "$kit"
+    mv "$tmp" "$kit"
+  fi
+  rm -rf "$tmp"
   docker rm "$id" >/dev/null
-  [ -e "$kit" ] && rm -rf "$kit"
-  mv "$tmp" "$kit"
+  trap - EXIT
 fi
 exec "$kit/cc" "$@"

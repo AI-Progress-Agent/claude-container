@@ -52,6 +52,11 @@ grep -qx "create $image" "$DOCKER_LOG" || fail "docker calls were: $(cat "$DOCKE
 [ -z "$(find "$work/cache/claude-container" -name 'v1.2.3.*')" ] ||
   fail "a temporary copy was left in the cache"
 
+# A cached kit without its launcher, as a crash could leave, is replaced.
+rm "$cached/cc"
+"$work/repo/docker/cc" >/dev/null
+[ -x "$cached/cc" ] || fail "a broken kit was not replaced"
+
 # A later run uses the cached kit and calls docker for nothing.
 : >"$DOCKER_LOG"
 "$work/repo/docker/cc" >/dev/null
@@ -100,12 +105,29 @@ done
 [ -z "$agent_browser_port" ] || fail "with no agent-browser.json, the port was $agent_browser_port"
 [ -z "$(browser_setup)" ] || fail "with no port, browser_setup printed: $(browser_setup)"
 
+# A directory name Compose would refuse becomes one it takes.
+mkdir -p "$work/My.App/docker"
+use_repo "$work/My.App"
+load_repo_config
+[ "$project_name" = my-app-claude ] || fail "from My.App, project_name was $project_name"
+
 # The port comes from agent-browser.json, and the browser setup names it.
 use_repo "$work/Main-Clone"
 printf '{\n  "cdp": "10099"\n}\n' >"$repo/agent-browser.json"
 load_repo_config
 [ "$agent_browser_port" = 10099 ] || fail "the port was $agent_browser_port"
 case $(browser_setup) in *":10099"*" && ") ;; *) fail "browser_setup printed: $(browser_setup)" ;; esac
+
+# A minified file gives the same port.
+printf '{"cdp":"10099","contentBoundary":true}\n' >"$repo/agent-browser.json"
+load_repo_config
+[ "$agent_browser_port" = 10099 ] || fail "from minified JSON, the port was $agent_browser_port"
+
+# A file with no port warns and goes on, so kit.sh can still set one.
+printf '{}\n' >"$repo/agent-browser.json"
+err=$(load_repo_config 2>&1) || fail "load_repo_config failed with no cdp port"
+case $err in *"names no cdp port"*) ;; *) fail "no warning for a missing port: $err" ;; esac
+rm "$repo/agent-browser.json"
 
 # docker/kit.sh overrides every default.
 cat >"$docker_dir/kit.sh" <<'EOF'
@@ -123,7 +145,7 @@ is_writable_sibling plugins || fail "kit.sh writable_siblings was ${writable_sib
 # The compose files stack in order: the kit's, the repo's, then yours.
 touch "$docker_dir/compose.local.yaml" "$docker_dir/compose.repo.yaml"
 build_compose_command
-[ "${compose[*]}" = "docker compose --project-directory $docker_dir -f $root/kit/compose.yaml -f $docker_dir/compose.repo.yaml -f $docker_dir/compose.local.yaml" ] ||
+[ "${compose[*]}" = "docker compose -p other-claude --project-directory $docker_dir -f $root/kit/compose.yaml -f $docker_dir/compose.repo.yaml -f $docker_dir/compose.local.yaml" ] ||
   fail "compose was: ${compose[*]}"
 
 # Under KIT_DEV, one more file builds the repo's image on the dev base, by

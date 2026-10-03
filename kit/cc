@@ -116,18 +116,24 @@ main() {
 #                       drives. The cdp port in the repo's agent-browser.json,
 #                       by default. Empty, agent-browser drives nothing on
 #                       the Mac.
+#
+# kit.sh is sourced inside this function, so it sets each one by plain
+# assignment. A `local` or a `declare` without -g there would be lost.
 load_repo_config() {
-  project_name=$(basename "$(main_clone)" | tr '[:upper:]' '[:lower:]')-claude
+  # Compose takes lower-case letters, digits, dashes and underscores only.
+  project_name=$(basename "$(main_clone)" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_\n-' -)-claude
   writable_siblings=()
   start_commands=true
   agent_browser_port=
   if [ -f "$repo/agent-browser.json" ]; then
-    agent_browser_port=$(sed -n '/"cdp"/s/[^0-9]//gp' "$repo/agent-browser.json")
-    : "${agent_browser_port:?agent-browser.json names no cdp port}"
+    agent_browser_port=$(sed -nE 's/.*"cdp"[[:space:]]*:[[:space:]]*"?([0-9]+).*/\1/p' "$repo/agent-browser.json" | head -n 1)
   fi
   if [ -f "$docker_dir/kit.sh" ]; then
     # shellcheck source=/dev/null
     . "$docker_dir/kit.sh"
+  fi
+  if [ -f "$repo/agent-browser.json" ] && [ -z "$agent_browser_port" ]; then
+    echo "docker/cc: agent-browser.json names no cdp port, so agent-browser drives nothing on the Mac" >&2
   fi
 }
 
@@ -160,9 +166,11 @@ export_compose_env() {
 
 # Sets compose, the docker compose command with the kit's compose file and
 # the repo's. Relative paths in the repo's files resolve against its docker
-# directory, as they would if the kit's file sat there too.
+# directory, as they would if the kit's file sat there too. -p names the
+# project, because a COMPOSE_PROJECT_NAME in your shell would otherwise win
+# over compose.yaml's name and give two repos one login.
 build_compose_command() {
-  compose=(docker compose --project-directory "$docker_dir" -f "$here/compose.yaml")
+  compose=(docker compose -p "$project_name" --project-directory "$docker_dir" -f "$here/compose.yaml")
   local file
   for file in compose.repo.yaml compose.local.yaml; do
     if [ -f "$docker_dir/$file" ]; then
@@ -276,6 +284,9 @@ collect_sibling_repos() {
   main=$(main_clone)
   parent=$(dirname "$main")
   own=$(origin_owner "$main") || return 0
+  # An origin the pattern cannot read, such as a local path, gives no owner.
+  # Every sibling without a readable origin would match it.
+  [ -n "$own" ] || return 0
   for dir in "$parent"/*; do
     [ "$dir" != "$main" ] && [ -d "$dir/.git" ] || continue
     [ "$(origin_owner "$dir")" = "$own" ] || continue
