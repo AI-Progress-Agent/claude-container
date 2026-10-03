@@ -1,0 +1,32 @@
+# The tools and checks for working on the kit itself. CI runs the same
+# tasks. image/mise.toml is a different file: the tools the base image
+# installs for every repo.
+
+[settings]
+# mise resolves no tool version younger than seven days, the same window the
+# image uses for Claude, mise and its tools.
+minimum_release_age = "7d"
+
+[tools]
+shellcheck = "0.11"
+
+[tasks.check]
+description = "Run shellcheck and the tests that need no Docker"
+depends = ["check:shell"]
+run = [
+  "test/siblings.sh",
+  "test/forward.sh",
+  "test/kit.sh",
+]
+
+# Add a new shell script here.
+[tasks."check:shell"]
+description = "Run shellcheck over the kit's shell scripts"
+run = "shellcheck -x kit/cc stub/cc image/add-user image/release-before image/cc-forward-notify example/docker/kit.sh test/siblings.sh test/forward.sh test/kit.sh test/smoke.sh"
+
+# Builds the base image as claude-container:dev, the tag KIT_DEV uses. Then
+# builds the example repo's layer on it and checks what a user sees inside.
+# CI runs the same smoke test before it publishes.
+[tasks.build]
+description = "Build the base image and smoke-test the example repo's layer on it"
+run = "test/smoke.sh"
