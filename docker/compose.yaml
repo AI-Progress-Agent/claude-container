@@ -1,0 +1,74 @@
+# One container: Claude Code for this repo. Start it with docker/cc, which
+# sets every variable used below.
+#
+# This file holds only what every setup needs. docker/cc adds the host's
+# Claude and git config, each path only if this machine has it. It adds the
+# program's other repos cloned next to this one, read-only. It stacks
+# docker/compose.local.yaml on top when you have one.
+#
+# Each host path mounts at the same absolute path inside, so the host's
+# config reads the same in both places. The login, the session state and
+# ~/.claude.json stay in a volume of their own: the host keeps its login in
+# the macOS keychain, which a container cannot reach, and a second writer on
+# the host's ~/.claude.json could corrupt it.
+name: ai-progress-claude
+
+services:
+  claude:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        HOST_HOME: ${HOST_HOME:?run docker/cc, not docker compose}
+        HOST_USER: ${HOST_USER:?run docker/cc, not docker compose}
+        REPO: ${REPO:?run docker/cc, not docker compose}
+        CLAUDE_VERSION: ${CLAUDE_VERSION:-latest}
+    image: ai-progress-claude:latest
+    init: true # reaps the processes Claude spawns
+    stdin_open: true # the CLI needs a real terminal
+    tty: true
+
+    # Nothing here needs root. The user holds no capabilities, and
+    # no-new-privileges stops a setuid binary such as su from gaining any.
+    # The limits keep a runaway process from starving Docker Desktop's VM.
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 2048
+    mem_limit: 8g
+
+    working_dir: ${REPO}
+
+    environment:
+      # No value: each one is copied from docker/cc's shell.
+      - GH_TOKEN
+      - TERM
+      - COLORTERM
+      - TZ
+      # The repo's mise.toml sets tools and tasks, so mise asks before it
+      # reads the file. This answers yes for this path only.
+      - MISE_TRUSTED_CONFIG_PATHS=${REPO}
+
+    volumes:
+      # The repo. The only host path Claude can write to besides this
+      # project's memory below. That includes any folder of partner material
+      # at the clone's root: .gitignore keeps it out of commits, not out of
+      # reach.
+      - ${REPO}:${REPO}
+      # Except the two places git reads commands from. A hook or a config
+      # entry such as core.fsmonitor written here would run on the Mac at
+      # its next git command, and git status would not show it. Commits and
+      # pushes still work. Anything that writes the config, such as setting
+      # a branch's upstream, fails inside: do that on the host.
+      - ${REPO}/.git/hooks:${REPO}/.git/hooks:ro
+      - ${REPO}/.git/config:${REPO}/.git/config:ro
+
+      # The container's own login, settings state and session history.
+      - claude-config:${HOST_HOME}/.claude
+
+      # This project's memory and transcripts, shared with the host, so
+      # memory written in one is read in the other. Only this project's:
+      # the rest of ~/.claude/projects may hold unrelated work.
+      - ${HOST_HOME}/.claude/projects/${PROJECT_KEY}:${HOST_HOME}/.claude/projects/${PROJECT_KEY}
+
+volumes:
+  claude-config:

@@ -1,0 +1,31 @@
+# The container's global mise config: the part of the host's global config
+# that the host's Claude setup calls. The repo's own mise.toml still wins
+# inside the repo, so Node comes from there.
+#
+#   - prettier: the host's PostToolUse format hook
+#   - ruff: the host's PostToolUse lint hook for Python files
+#   - uv: runs the host's smart-quotes hook, a uv script
+#   - ccstatusline: the host's status line
+#   - pyright, typescript-language-server: the LSP plugins
+#   - ast-grep: the ast-grep plugin and the global CLAUDE.md
+#   - agent-browser: drives the Mac's Chrome. docker/cc says how it connects. Pinned.
+#
+# Node is here because the npm tools need one to install and run. Python is
+# here so python3 works in the scratchpad and for uv scripts; this repo pins
+# none of its own.
+
+[settings]
+# The same seven days the host and the repo use.
+minimum_release_age = "7d"
+
+[tools]
+node = "lts"
+python = "3.12"
+ast-grep = "latest"
+prettier = "latest"
+ruff = "latest"
+uv = "latest"
+"npm:ccstatusline" = "latest"
+"npm:pyright" = "latest"
+"npm:typescript-language-server" = "latest"
+"npm:agent-browser" = "0.38.1"

@@ -1,0 +1,19 @@
+#!/bin/sh
+# Hands one hook event to the host. docker/cc mounts a directory at
+# /run/cc-notify and watches it on the host. Each file dropped there becomes
+# a notification on the host. A container started some other way has no such
+# directory, so the event is dropped. A hook that fails would show as an
+# error in Claude, so every path exits 0. CC_NOTIFY_DIR points it elsewhere,
+# for docker/notify/test-forward.sh.
+dir=${CC_NOTIFY_DIR:-/run/cc-notify}
+if [ ! -d "$dir" ]; then
+  cat >/dev/null
+  exit 0
+fi
+# Write under a dot name and rename, so the watcher never reads half a file.
+# The name sorts by time, so events arrive in order.
+name=$(date +%s%N)-$$.json
+if cat >"$dir/.$name" 2>/dev/null; then
+  mv "$dir/.$name" "$dir/$name" 2>/dev/null || rm -f "$dir/.$name"
+fi
+exit 0

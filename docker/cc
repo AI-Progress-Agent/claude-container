@@ -1,0 +1,342 @@
+#!/usr/bin/env bash
+# Claude Code for this repo, in a container that mirrors the host's Claude
+# setup: global CLAUDE.md, settings, hooks, output styles, skills, plugins,
+# the status line, git identity, and this project's memory. The program's
+# other repos cloned next to this one mount read-only.
+#
+#   docker/cc [args]      interactive Claude; args go to claude unchanged
+#   docker/cc shell       a bash prompt in the same container
+#   docker/cc build       build the image; again after mise.toml changes
+#   docker/cc upgrade     rebuild from scratch, so every "latest" moves
+#
+# The first run asks you to sign in. The host keeps its login in the macOS
+# keychain, which the container cannot read, so the container keeps its own
+# in a volume. Later runs skip the sign-in.
+#
+# Every run is a fresh container. What lasts is in volumes, and in the host
+# paths it mounts.
+#
+# Two uncommitted files, both optional, carry what is yours alone:
+#
+#   docker/compose.local.yaml   stacked on compose.yaml: your own mounts and
+#                               environment variables
+#   docker/cc.local             sourced by this script before the container
+#                               starts: export what those variables need, and
+#                               append commands to local_setup to run inside
+#                               before Claude does, and redefine notify_host
+#                               to use your own notifier
+set -euo pipefail
+
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+repo=$(dirname "$here")
+
+main() {
+  export_compose_env
+  build_compose_command
+
+  local program=claude
+  case "${1:-}" in
+    build)
+      shift
+      exec "${compose[@]}" build "$@"
+      ;;
+    # A plain build reuses each cached layer, so nothing it installs as
+    # "latest" ever moves: not Claude, not mise, not the tools in either mise
+    # config. This skips the cache and fetches a newer base image as well.
+    upgrade)
+      shift
+      exec "${compose[@]}" build --no-cache --pull "$@"
+      ;;
+    shell)
+      shift
+      program=bash
+      ;;
+  esac
+
+  # A bind mount whose source is missing becomes an empty directory owned by
+  # root. compose.yaml mounts this one, and it may not exist yet.
+  mkdir -p "$HOME/.claude/projects/$PROJECT_KEY"
+
+  collect_host_mounts
+  collect_sibling_repos
+  export_gh_token
+  export_timezone
+  load_local_overrides "$@"
+  start_notify_watcher
+  run_container "$program" "$@"
+}
+
+# compose.yaml reads these. The image is built for this user and home path,
+# so a teammate building it gets their own.
+export_compose_env() {
+  export REPO=$repo
+  export HOST_HOME=$HOME
+  HOST_USER=$(id -un)
+  export HOST_USER
+  # Claude names a project's directory under ~/.claude/projects after its
+  # path, with every character that is not a letter or digit turned into a
+  # dash.
+  PROJECT_KEY=$(printf '%s' "$repo" | sed 's/[^A-Za-z0-9]/-/g')
+  export PROJECT_KEY
+}
+
+# Sets compose, the docker compose command with this repo's compose files.
+build_compose_command() {
+  compose=(docker compose -f "$here/compose.yaml")
+  if [ -f "$here/compose.local.yaml" ]; then
+    compose+=(-f "$here/compose.local.yaml")
+  fi
+}
+
+# Sets mounts, the -v arguments for the run, and links, the shell text that
+# recreates each mounted link inside.
+collect_host_mounts() {
+  # Host config to mirror, each read-only at its own path inside. A path this
+  # machine does not have is left out, so any Claude setup runs as it is.
+  # Links resolve only if their targets are mounted too: mount a dotfiles
+  # repo or a directory marketplace in docker/compose.local.yaml.
+  local optional=(
+    .claude/CLAUDE.md
+    .claude/settings.json
+    .claude/settings.local.json
+    .claude/output-styles
+    .claude/skills
+    .claude/agents
+    .claude/commands
+    .claude/hooks
+    # installed_plugins.json names each plugin by its absolute host path.
+    .claude/plugins
+    # Where the skills CLI installs shared skills.
+    .agents
+    # Scripts the status line and hooks call by name. The image puts ~/bin
+    # last on PATH.
+    bin
+    .config/ccstatusline
+    .gitconfig
+    .gitconfig.local
+    .config/git
+  )
+  #
+  # A file mounted on its own is pinned to the copy that existed at start. An
+  # editor that saves by writing a new copy and renaming it over the old one
+  # leaves the container reading the deleted original, and Claude drops every
+  # setting in it without a word. Nothing fixes that for a plain file in
+  # $HOME. A file that is a link, into a dotfiles repo say, can be fixed:
+  # mount the directory its target is in, which follows the rename, and
+  # recreate the link inside, pointing there. Those directories mount under
+  # /mnt/host-links, not at their own paths, so they never collide with a
+  # mount in compose.local.yaml.
+  mounts=()
+  links=
+  local link_dirs=()
+  local path src target parent dir d i
+  for path in "${optional[@]}"; do
+    src=$HOME/$path
+    [ -e "$src" ] || continue
+    if [ -L "$src" ] && [ -f "$src" ]; then
+      target=$(realpath "$src")
+      parent=$(dirname "$target")
+      dir=
+      i=0
+      for d in ${link_dirs[@]+"${link_dirs[@]}"}; do
+        [ "$d" = "$parent" ] && dir=/mnt/host-links/$i
+        i=$((i + 1))
+      done
+      if [ -z "$dir" ]; then
+        dir=/mnt/host-links/$i
+        link_dirs+=("$parent")
+        mounts+=(-v "$parent:$dir:ro")
+      fi
+      links+=$(printf 'ln -sfn %q %q && ' "$dir/$(basename "$target")" "$src")
+    else
+      mounts+=(-v "$src:$src:ro")
+    fi
+  done
+}
+
+# Adds to mounts the program's other repos: each directory next to this
+# clone that is a clone itself, with an origin on the same host and owner as
+# this one's. Each mounts read-only at its own path. The owner test keeps out
+# whatever else shares the parent directory, such as another client's work
+# or a partner folder. A worktree runs this too, so the parent is the main
+# clone's, not .worktrees.
+#
+# A sibling named in writable_siblings mounts writable instead, with its
+# .git/hooks and .git/config read-only, as compose.yaml mounts this repo's.
+# Git runs commands from both, so a write there from the container would run
+# on the Mac.
+collect_sibling_repos() {
+  local main parent own dir name found=() writable=()
+  main=$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) ||
+    return 0
+  main=$(dirname "$main")
+  parent=$(dirname "$main")
+  own=$(origin_owner "$main") || return 0
+  for dir in "$parent"/*; do
+    [ "$dir" != "$main" ] && [ -d "$dir/.git" ] || continue
+    [ "$(origin_owner "$dir")" = "$own" ] || continue
+    name=$(basename "$dir")
+    if is_writable_sibling "$name"; then
+      # A missing source would become an empty directory the container
+      # could fill, so make it here on the Mac first.
+      mkdir -p "$dir/.git/hooks"
+      mounts+=(-v "$dir:$dir"
+        -v "$dir/.git/hooks:$dir/.git/hooks:ro"
+        -v "$dir/.git/config:$dir/.git/config:ro")
+      writable+=("$name")
+    else
+      mounts+=(-v "$dir:$dir:ro")
+      found+=("$name")
+    fi
+  done
+  if [ ${#found[@]} -gt 0 ]; then
+    echo "docker/cc: mounted read-only: ${found[*]}" >&2
+  fi
+  if [ ${#writable[@]} -gt 0 ]; then
+    echo "docker/cc: mounted writable: ${writable[*]}" >&2
+  fi
+}
+
+# Siblings this repo's sessions edit, because they have no container of
+# their own yet. ai-progress-plugins holds the program's shared plugin (#40).
+writable_siblings=(ai-progress-plugins)
+
+# Succeeds when $1 is named in writable_siblings.
+is_writable_sibling() {
+  local name
+  for name in ${writable_siblings[@]+"${writable_siblings[@]}"}; do
+    [ "$name" = "$1" ] && return 0
+  done
+  return 1
+}
+
+# Prints host/owner from the origin URL of the clone at $1, in lower case,
+# because GitHub ignores case in both. Reads the SSH form
+# (git@github.com:owner/repo), ssh:// and https://.
+origin_owner() {
+  local url
+  url=$(git -C "$1" remote get-url origin 2>/dev/null) || return 1
+  printf '%s\n' "$url" |
+    sed -nE 's#^([a-z+]+://)?([^@/]+@)?([^:/]+)(:[0-9]+)?[:/]([^/]+)/.*#\3/\5#p' |
+    tr '[:upper:]' '[:lower:]'
+}
+
+# gh on macOS keeps its token in the keychain. Hand the container the token
+# itself; compose.yaml copies it from this shell, which keeps it off the
+# command line where `ps` would show it.
+export_gh_token() {
+  GH_TOKEN=$(gh auth token 2>/dev/null || true)
+  export GH_TOKEN
+  if [ -z "$GH_TOKEN" ]; then
+    echo "docker/cc: gh has no login on this machine, so git push and gh will fail inside" >&2
+  fi
+}
+
+# The container's clock matches this one. /etc/localtime links into the zone
+# database, and the part after zoneinfo/ is the zone's name.
+export_timezone() {
+  TZ=$(readlink /etc/localtime | sed 's|.*/zoneinfo/||')
+  export TZ
+}
+
+# Sets local_setup, the commands to run inside before Claude. docker/cc.local
+# can change it, export variables, and redefine notify_host. It gets the
+# arguments for Claude or bash as $@.
+load_local_overrides() {
+  local_setup=true
+  if [ -f "$here/cc.local" ]; then
+    # shellcheck source=/dev/null
+    . "$here/cc.local"
+  fi
+}
+
+# The image's managed settings hook Stop and Notification to drop each event
+# as a file into /run/cc-notify. That is this session's own directory, and a
+# loop on the host hands each file to notify_host. A file drop needs no port,
+# so two sessions never collide.
+#
+# compose replaces this script, through exec, so every signal reaches
+# compose directly. compose keeps this script's process ID. The loop checks
+# that ID on each pass. When the process has ended, the loop removes the
+# directory and stops.
+# Sets notify_dir and notify_log, which watch_events reads.
+start_notify_watcher() {
+  notify_dir=$(mktemp -d "${TMPDIR:-/tmp}/cc-notify.XXXXXX")
+  # The notifier's output. It sits outside the directory, so it outlasts the
+  # session.
+  notify_log=${TMPDIR:-/tmp}/cc-notify.log
+  watch_events &
+}
+
+# Runs $1, claude or bash, inside with the other arguments. Before it starts:
+# point agent-browser at the Mac's Chrome, recreate the links, then run
+# docker/cc.local's setup. The repo installs nothing at start, because it has
+# no package.json.
+#
+# agent-browser drives the Chrome that `mise run browser:start` opens on the
+# Mac. Chrome refuses a request that names a host other than localhost or an
+# IP, so connect by the IP that host.docker.internal resolves to. It is looked
+# up here, at start, because Docker Desktop can change it. It takes the IPv4
+# address, because an IPv6 one would need brackets in the URL. If the name
+# does not resolve, it warns and leaves the variable unset. The port is the
+# one agent-browser.json names, which browser:start reads too. The variable
+# overrides agent-browser.json.
+run_container() {
+  local program=$1
+  shift
+  local port
+  port=$(sed -n '/"cdp"/s/[^0-9]//gp' "$repo/agent-browser.json")
+  : "${port:?agent-browser.json names no cdp port}"
+  # shellcheck disable=SC2016 # expands inside the container, not here
+  local cdp='mac_ip=$(getent ahostsv4 host.docker.internal | awk "NR == 1 {print \$1}")
+if [ -n "$mac_ip" ]; then export AGENT_BROWSER_CDP=http://$mac_ip:'"$port"'
+else echo "docker/cc: host.docker.internal does not resolve, so agent-browser cannot reach the Mac'"'"'s Chrome" >&2; fi'
+  local setup="$cdp && ${links}{ $local_setup; }"
+  exec "${compose[@]}" run --rm ${mounts[@]+"${mounts[@]}"} \
+    -v "$notify_dir:/run/cc-notify" claude \
+    bash -c "$setup && exec $program \"\$@\"" "$program" "$@"
+}
+
+# Runs on the host for each Stop and Notification event inside. Its stdin is
+# the event's JSON, and its working directory is the session's directory.
+# It runs in this terminal's environment, so a notifier that checks
+# $TMUX_PANE sees your pane. docker/cc.local can redefine it.
+notify_host() {
+  if command -v cc-notify.mjs >/dev/null; then cc-notify.mjs; fi
+}
+
+watch_events() {
+  local event cwd
+  # A hangup or TERM that reaches the loop still removes the directory.
+  trap 'rm -rf "$notify_dir"' EXIT
+  trap exit HUP TERM
+  while kill -0 $$ 2>/dev/null; do
+    for event in "$notify_dir"/*.json; do
+      [ -e "$event" ] || continue
+      # The repo mounts at its own path, so a directory under it inside is
+      # the same directory on the host. Any other path falls back to the
+      # repo root. So does a path with an escaped character, because the sed
+      # does not decode JSON.
+      cwd=$(sed -n 's/.*"cwd" *: *"\([^"]*\)".*/\1/p' "$event" | head -n 1) ||
+        cwd=
+      # One event runs at a time, with no time limit. A notifier that hangs
+      # holds back every later event of the session.
+      # Claude owns the terminal, so the notifier writes to the log instead.
+      (
+        case $cwd in
+          "$repo" | "$repo"/*) cd "$cwd" 2>/dev/null || cd "$repo" ;;
+          *) cd "$repo" ;;
+        esac
+        notify_host
+      ) <"$event" >>"${notify_log:-/dev/null}" 2>&1 || true
+      rm -f "$event"
+    done
+    sleep 0.5
+  done
+}
+
+# docker/notify/test-forward.sh sources this file to test watch_events, so
+# main runs only when the file runs as a script.
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  main "$@"
+fi

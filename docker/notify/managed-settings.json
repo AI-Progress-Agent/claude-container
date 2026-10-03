@@ -1,0 +1,18 @@
+{
+  "hooks": {
+    "Notification": [
+      {
+        "hooks": [
+          { "type": "command", "command": "/usr/local/bin/cc-forward-notify" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "/usr/local/bin/cc-forward-notify" }
+        ]
+      }
+    ]
+  }
+}

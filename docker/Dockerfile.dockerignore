@@ -1,0 +1,7 @@
+# The build needs these files. Everything else stays out of the build
+# context, data/ and its real partner records above all.
+*
+!mise.toml
+!mise.local.toml
+!docker/mise.toml
+!docker/notify/
