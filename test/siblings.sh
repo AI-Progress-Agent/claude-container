@@ -38,7 +38,10 @@ clone "$work/rw-other-client" git@github.com:other-client/rw-other-client.git
 rm -rf "$work/rw-sibling/.git/hooks"
 mkdir "$work/partner-folder"
 git -C "$work/this" -c user.name=test -c user.email=test commit -q --allow-empty -m init
+# Worktrees in both usual places: .worktrees for a person, .claude/worktrees
+# for a subagent.
 git -C "$work/this" worktree add -q "$work/this/.worktrees/wt"
+git -C "$work/this" worktree add -q "$work/this/.claude/worktrees/agent"
 
 # A writable sibling still needs this repo's origin owner.
 writable_siblings=(rw-sibling rw-other-client)
@@ -50,8 +53,9 @@ expected="-v $work/https-sibling:$work/https-sibling:ro \
 -v $work/ssh-sibling:$work/ssh-sibling:ro \
 -v $work/url-sibling:$work/url-sibling:ro"
 
-# From the main clone, and from a worktree under it.
-for repo in "$work/this" "$work/this/.worktrees/wt"; do
+# From the main clone, and from a worktree in each place.
+for repo in "$work/this" "$work/this/.worktrees/wt" \
+  "$work/this/.claude/worktrees/agent"; do
   mounts=()
   collect_sibling_repos 2>/dev/null
   [ "${mounts[*]}" = "$expected" ] ||
