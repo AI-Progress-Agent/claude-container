@@ -1,0 +1,50 @@
+# Checks every change to the kit. One job runs shellcheck and the tests that
+# need no Docker. The other builds the base image and the example repo's
+# layer on it, then smoke-tests what a user sees inside. Both run natively
+# on GitHub's arm64 runner, the one architecture the image supports.
+#
+# Actions are pinned to a commit hash, and .github/dependabot.yml bumps them.
+# The mise binary is pinned by hand, because mise.toml cannot pin mise itself
+# and an unpinned mise-action asks GitHub's API for the newest release on
+# every run.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# A new push to a pull request cancels its older run. Pushes to main each run
+# to the end, so every commit on main gets checked.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    name: shellcheck and tests
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: 2026.9.12
+          install_args: shellcheck
+      - run: mise run check
+
+  build:
+    name: build and smoke test
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: test/smoke.sh

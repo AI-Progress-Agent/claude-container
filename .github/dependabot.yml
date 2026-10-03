@@ -1,0 +1,22 @@
+# Hash-pinned actions and the digest-pinned Debian image do not update
+# themselves. Each entry opens the pull request that bumps the pin. Each waits
+# seven days after a release, the same window the image uses for its tools.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: ci
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: build

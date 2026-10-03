@@ -1,0 +1,93 @@
+# Publishes the base image to ghcr.io/ai-progress-agent/claude-container.
+#
+#   - A pushed tag, such as v1.2.0, publishes that tag's commit under that
+#     tag. This is how a change on main ships.
+#   - Each Monday, the newest tag's commit is built again and published as
+#     the next patch, such as v1.2.1. That picks up the Claude Code and mise
+#     releases at least seven days old, newer tools from image/mise.toml, and
+#     Debian's security updates. It builds the tag, not main, so a change that
+#     waits on main never ships as a patch.
+#
+# Each repo's Dependabot then opens the pull request that moves its FROM
+# line to the new tag and digest.
+#
+# The image is published before its git tag and release exist, so a tag
+# never names an image that is missing. The smoke test runs before either.
+
+name: release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/ai-progress-agent/claude-container
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Choose the version
+        id: version
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            version=$GITHUB_REF_NAME
+          else
+            latest=$(git tag -l 'v*.*.*' --sort=-v:refname | head -n 1)
+            if [ -z "$latest" ]; then
+              echo "No release yet. Push the first tag, v1.0.0, by hand." >&2
+              exit 1
+            fi
+            IFS=. read -r major minor patch <<<"${latest#v}"
+            version=v$major.$minor.$((patch + 1))
+            git checkout -q "$latest"
+          fi
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse HEAD)" >>"$GITHUB_OUTPUT"
+
+      - name: Choose Claude Code and mise
+        id: tools
+        run: |
+          echo "claude=$(image/release-before @anthropic-ai/claude-code 7)" >>"$GITHUB_OUTPUT"
+          echo "mise=$(image/release-before @jdxcode/mise 7)" >>"$GITHUB_OUTPUT"
+
+      # --pull and --no-cache, so nothing comes from an earlier build.
+      - name: Build and smoke-test
+        run: >-
+          test/smoke.sh --pull --no-cache
+          --build-arg CLAUDE_VERSION=${{ steps.tools.outputs.claude }}
+          --build-arg MISE_VERSION=${{ steps.tools.outputs.mise }}
+
+      - name: Publish the image, then the tag and release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          COMMIT: ${{ steps.version.outputs.commit }}
+          CLAUDE: ${{ steps.tools.outputs.claude }}
+          MISE: ${{ steps.tools.outputs.mise }}
+        run: |
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker tag claude-container:dev "$IMAGE:$VERSION"
+          docker push "$IMAGE:$VERSION"
+          ref=$(docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE:$VERSION")
+          fence='```'
+          notes=$(printf 'Claude Code %s, mise %s.\n\nA repo pins this release with this line in docker/Dockerfile:\n\n%sdockerfile\nFROM %s:%s@%s\n%s\n' \
+            "$CLAUDE" "$MISE" "$fence" "$IMAGE" "$VERSION" "${ref#*@}" "$fence")
+          gh release create "$VERSION" --target "$COMMIT" --title "$VERSION" --notes "$notes"
