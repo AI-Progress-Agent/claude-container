@@ -15,6 +15,9 @@ set -euo pipefail
 hook=$(cd "$(dirname "$0")/../image" && pwd)/cc-forward-notify
 work=$(mktemp -d "${TMPDIR:-/tmp}/cc-notify-test.XXXXXX")
 trap 'kill "${watcher:-}" 2>/dev/null || true; rm -rf "$work"' EXIT
+# On macOS TMPDIR ends in a slash, and the notifier's working directory has
+# none.
+work=$(cd "$work" && pwd -P)
 
 notify_dir=$work/events
 seen=$work/seen
