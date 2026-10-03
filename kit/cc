@@ -1,13 +1,20 @@
 #!/usr/bin/env bash
-# Claude Code for this repo, in a container that mirrors the host's Claude
-# setup: global CLAUDE.md, settings, hooks, output styles, skills, plugins,
-# the status line, git identity, and this project's memory. The program's
-# other repos cloned next to this one mount read-only.
+# The claude-container launcher. It runs Claude Code for a repo in a
+# container that mirrors the host's Claude setup: global CLAUDE.md, settings,
+# hooks, output styles, skills, plugins, the status line, git identity, and
+# the project's memory. The program's other repos cloned next to the repo
+# mount read-only.
+#
+# A repo does not call this file directly. Its docker/cc stub copies this
+# kit out of the image that docker/Dockerfile's FROM line names, once per
+# image tag. Then it runs that copy with KIT_DOCKER_DIR set to the repo's
+# docker directory. So these are the stub's commands:
 #
 #   docker/cc [args]      interactive Claude; args go to claude unchanged
 #   docker/cc shell       a bash prompt in the same container
 #   docker/cc build       build the image; again after mise.toml changes
-#   docker/cc upgrade     rebuild from scratch, so every "latest" moves
+#   docker/cc upgrade     rebuild from scratch, so every "latest" in the
+#                         repo's mise config moves
 #
 # The first run asks you to sign in. The host keeps its login in the macOS
 # keychain, which the container cannot read, so the container keeps its own
@@ -16,21 +23,40 @@
 # Every run is a fresh container. What lasts is in volumes, and in the host
 # paths it mounts.
 #
+# Two committed files, both optional, carry what is the repo's alone:
+#
+#   docker/kit.sh               sourced by this script: the repo's settings,
+#                               which load_repo_config lists
+#   docker/compose.repo.yaml    stacked on compose.yaml: the repo's own
+#                               volumes and environment variables
+#
 # Two uncommitted files, both optional, carry what is yours alone:
 #
-#   docker/compose.local.yaml   stacked on compose.yaml: your own mounts and
-#                               environment variables
+#   docker/compose.local.yaml   stacked on compose.repo.yaml: your own mounts
+#                               and environment variables
 #   docker/cc.local             sourced by this script before the container
 #                               starts: export what those variables need, and
 #                               append commands to local_setup to run inside
 #                               before Claude does, and redefine notify_host
 #                               to use your own notifier
+#
+# KIT_DEV, set to the path of a claude-container checkout, tries a kit change
+# on a real repo before a release. The stub runs that checkout's launcher,
+# and build and upgrade build that checkout's base image first. The repo's
+# image is then built on it, in place of the image the FROM line names.
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-repo=$(dirname "$here")
+# The repo's docker directory, and the repo that holds it.
+docker_dir=${KIT_DOCKER_DIR:-}
+repo=$(dirname "${docker_dir:-.}")
+
+# The tag KIT_DEV builds its base image under.
+dev_image=claude-container:dev
 
 main() {
+  : "${KIT_DOCKER_DIR:?run docker/cc in a repo, not the launcher itself}"
+  load_repo_config
   export_compose_env
   build_compose_command
 
@@ -38,20 +64,29 @@ main() {
   case "${1:-}" in
     build)
       shift
+      build_dev_base
       exec "${compose[@]}" build "$@"
       ;;
-    # A plain build reuses each cached layer, so nothing it installs as
-    # "latest" ever moves: not Claude, not mise, not the tools in either mise
-    # config. This skips the cache and fetches a newer base image as well.
+    # A plain build reuses each cached layer, so nothing the repo's mise
+    # config installs as "latest" ever moves. This skips the cache. Claude
+    # and the base image's tools move only with a new base image: merge the
+    # pull request that bumps the FROM line, then build.
     upgrade)
       shift
-      exec "${compose[@]}" build --no-cache --pull "$@"
+      build_dev_base
+      exec "${compose[@]}" build --no-cache "$@"
       ;;
     shell)
       shift
       program=bash
       ;;
   esac
+
+  # A run builds the image when it is missing. Under KIT_DEV, that build
+  # needs the base image from the checkout.
+  if [ -n "${KIT_DEV:-}" ] && ! docker image inspect "$dev_image" >/dev/null 2>&1; then
+    build_dev_base
+  fi
 
   # A bind mount whose source is missing becomes an empty directory owned by
   # root. compose.yaml mounts this one, and it may not exist yet.
@@ -66,9 +101,52 @@ main() {
   run_container "$program" "$@"
 }
 
+# Sets the repo's settings to the kit's defaults, then sources docker/kit.sh,
+# which can change any of them:
+#
+#   project_name        names the compose project, and so the image and the
+#                       volumes, the login among them. The main clone's
+#                       directory name plus -claude, by default. Two repos
+#                       with one name would share a login and an image.
+#   writable_siblings   the sibling repos that mount writable. None, by
+#                       default. See collect_sibling_repos.
+#   start_commands      shell commands run inside at each start, before
+#                       docker/cc.local's local_setup. Nothing, by default.
+#   agent_browser_port  the port of the Mac's Chrome that agent-browser
+#                       drives. The cdp port in the repo's agent-browser.json,
+#                       by default. Empty, agent-browser drives nothing on
+#                       the Mac.
+load_repo_config() {
+  project_name=$(basename "$(main_clone)" | tr '[:upper:]' '[:lower:]')-claude
+  writable_siblings=()
+  start_commands=true
+  agent_browser_port=
+  if [ -f "$repo/agent-browser.json" ]; then
+    agent_browser_port=$(sed -n '/"cdp"/s/[^0-9]//gp' "$repo/agent-browser.json")
+    : "${agent_browser_port:?agent-browser.json names no cdp port}"
+  fi
+  if [ -f "$docker_dir/kit.sh" ]; then
+    # shellcheck source=/dev/null
+    . "$docker_dir/kit.sh"
+  fi
+}
+
+# Prints the main clone's path. From a worktree, that is the clone the
+# worktree belongs to, wherever the worktree sits. Outside git, it is the
+# repo itself.
+main_clone() {
+  local dir
+  if dir=$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir 2>/dev/null); then
+    dirname "$dir"
+  else
+    printf '%s\n' "$repo"
+  fi
+}
+
 # compose.yaml reads these. The image is built for this user and home path,
 # so a teammate building it gets their own.
 export_compose_env() {
+  export PROJECT_NAME=$project_name
   export REPO=$repo
   export HOST_HOME=$HOME
   HOST_USER=$(id -un)
@@ -80,12 +158,39 @@ export_compose_env() {
   export PROJECT_KEY
 }
 
-# Sets compose, the docker compose command with this repo's compose files.
+# Sets compose, the docker compose command with the kit's compose file and
+# the repo's. Relative paths in the repo's files resolve against its docker
+# directory, as they would if the kit's file sat there too.
 build_compose_command() {
-  compose=(docker compose -f "$here/compose.yaml")
-  if [ -f "$here/compose.local.yaml" ]; then
-    compose+=(-f "$here/compose.local.yaml")
+  compose=(docker compose --project-directory "$docker_dir" -f "$here/compose.yaml")
+  local file
+  for file in compose.repo.yaml compose.local.yaml; do
+    if [ -f "$docker_dir/$file" ]; then
+      compose+=(-f "$docker_dir/$file")
+    fi
+  done
+  if [ -n "${KIT_DEV:-}" ]; then
+    compose+=(-f "$(write_dev_override)")
   fi
+}
+
+# Builds the base image from the KIT_DEV checkout, when KIT_DEV is set.
+build_dev_base() {
+  if [ -n "${KIT_DEV:-}" ]; then
+    docker build -t "$dev_image" "$KIT_DEV"
+  fi
+}
+
+# Writes a compose file that builds the repo's image on the KIT_DEV base, and
+# prints its path. A build context named after the image in the FROM line
+# takes that image's place, so the FROM line, digest and all, stays as it is.
+# The stub sets KIT_BASE_IMAGE to that image.
+write_dev_override() {
+  local file=${XDG_CACHE_HOME:-$HOME/.cache}/claude-container/dev/$project_name.yaml
+  mkdir -p "$(dirname "$file")"
+  printf 'services:\n  claude:\n    build:\n      additional_contexts:\n        "%s": docker-image://%s\n' \
+    "${KIT_BASE_IMAGE:?the stub sets KIT_BASE_IMAGE}" "$dev_image" >"$file"
+  printf '%s\n' "$file"
 }
 
 # Sets mounts, the -v arguments for the run, and links, the shell text that
@@ -159,7 +264,8 @@ collect_host_mounts() {
 # this one's. Each mounts read-only at its own path. The owner test keeps out
 # whatever else shares the parent directory, such as another client's work
 # or a partner folder. A worktree runs this too, so the parent is the main
-# clone's, not .worktrees.
+# clone's, wherever the worktree sits: .worktrees, .claude/worktrees or
+# elsewhere.
 #
 # A sibling named in writable_siblings mounts writable instead, with its
 # .git/hooks and .git/config read-only, as compose.yaml mounts this repo's.
@@ -167,9 +273,7 @@ collect_host_mounts() {
 # on the Mac.
 collect_sibling_repos() {
   local main parent own dir name found=() writable=()
-  main=$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) ||
-    return 0
-  main=$(dirname "$main")
+  main=$(main_clone)
   parent=$(dirname "$main")
   own=$(origin_owner "$main") || return 0
   for dir in "$parent"/*; do
@@ -196,10 +300,6 @@ collect_sibling_repos() {
     echo "docker/cc: mounted writable: ${writable[*]}" >&2
   fi
 }
-
-# Siblings this repo's sessions edit, because they have no container of
-# their own yet. ai-progress-plugins holds the program's shared plugin (#40).
-writable_siblings=(ai-progress-plugins)
 
 # Succeeds when $1 is named in writable_siblings.
 is_writable_sibling() {
@@ -244,9 +344,9 @@ export_timezone() {
 # arguments for Claude or bash as $@.
 load_local_overrides() {
   local_setup=true
-  if [ -f "$here/cc.local" ]; then
+  if [ -f "$docker_dir/cc.local" ]; then
     # shellcheck source=/dev/null
-    . "$here/cc.local"
+    . "$docker_dir/cc.local"
   fi
 }
 
@@ -269,32 +369,34 @@ start_notify_watcher() {
 }
 
 # Runs $1, claude or bash, inside with the other arguments. Before it starts:
-# point agent-browser at the Mac's Chrome, recreate the links, then run
-# docker/cc.local's setup. The repo installs nothing at start, because it has
-# no package.json.
-#
-# agent-browser drives the Chrome that `mise run browser:start` opens on the
-# Mac. Chrome refuses a request that names a host other than localhost or an
-# IP, so connect by the IP that host.docker.internal resolves to. It is looked
-# up here, at start, because Docker Desktop can change it. It takes the IPv4
-# address, because an IPv6 one would need brackets in the URL. If the name
-# does not resolve, it warns and leaves the variable unset. The port is the
-# one agent-browser.json names, which browser:start reads too. The variable
-# overrides agent-browser.json.
+# point agent-browser at the Mac's Chrome, recreate the links, run the repo's
+# start_commands, then run docker/cc.local's setup.
 run_container() {
   local program=$1
   shift
-  local port
-  port=$(sed -n '/"cdp"/s/[^0-9]//gp' "$repo/agent-browser.json")
-  : "${port:?agent-browser.json names no cdp port}"
-  # shellcheck disable=SC2016 # expands inside the container, not here
-  local cdp='mac_ip=$(getent ahostsv4 host.docker.internal | awk "NR == 1 {print \$1}")
-if [ -n "$mac_ip" ]; then export AGENT_BROWSER_CDP=http://$mac_ip:'"$port"'
-else echo "docker/cc: host.docker.internal does not resolve, so agent-browser cannot reach the Mac'"'"'s Chrome" >&2; fi'
-  local setup="$cdp && ${links}{ $local_setup; }"
+  local setup
+  setup="$(browser_setup)${links}{ $start_commands; } && { $local_setup; }"
   exec "${compose[@]}" run --rm ${mounts[@]+"${mounts[@]}"} \
     -v "$notify_dir:/run/cc-notify" claude \
     bash -c "$setup && exec $program \"\$@\"" "$program" "$@"
+}
+
+# Prints the shell text that points agent-browser inside at the Mac's Chrome,
+# ending in " && ", or nothing when agent_browser_port is empty.
+#
+# agent-browser drives the Chrome that the repo opens on the Mac with remote
+# debugging on that port. Chrome refuses a request that names a host other
+# than localhost or an IP, so connect by the IP that host.docker.internal
+# resolves to. It is looked up inside, at start, because Docker Desktop can
+# change it. It takes the IPv4 address, because an IPv6 one would need
+# brackets in the URL. If the name does not resolve, it warns and leaves the
+# variable unset. The variable overrides agent-browser.json.
+browser_setup() {
+  [ -n "$agent_browser_port" ] || return 0
+  # shellcheck disable=SC2016 # expands inside the container, not here
+  printf '%s' 'mac_ip=$(getent ahostsv4 host.docker.internal | awk "NR == 1 {print \$1}")
+if [ -n "$mac_ip" ]; then export AGENT_BROWSER_CDP=http://$mac_ip:'"$agent_browser_port"'
+else echo "docker/cc: host.docker.internal does not resolve, so agent-browser cannot reach the Mac'"'"'s Chrome" >&2; fi && '
 }
 
 # Runs on the host for each Stop and Notification event inside. Its stdin is
@@ -335,8 +437,8 @@ watch_events() {
   done
 }
 
-# docker/notify/test-forward.sh sources this file to test watch_events, so
-# main runs only when the file runs as a script.
+# The tests in the kit's test/ source this file, so main runs only when the
+# file runs as a script.
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
   main "$@"
 fi

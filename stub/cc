@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Claude Code for this repo, in a container: run `docker/cc`, or
+# `docker/cc shell`, `build` or `upgrade`. This file is the claude-container
+# stub, the same in every repo. Copy it from the kit's stub/cc rather than
+# edit it here: the repo's own settings go in docker/kit.sh.
+#
+# The image that docker/Dockerfile's FROM line names holds the launcher, in
+# /opt/kit. On the first run for each tag, this copies that directory to
+# ~/.cache/claude-container/<tag>, then runs the launcher there. So the FROM
+# line pins the image and the launcher together. The kit's README says what
+# the launcher does.
+#
+# KIT_DEV, set to the path of a claude-container checkout, runs that
+# checkout's launcher instead.
+set -euo pipefail
+
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+base=$(sed -nE 's#^FROM[[:space:]]+(ghcr\.io/ai-progress-agent/claude-container:[^[:space:]]+).*#\1#p' "$here/Dockerfile" | head -n 1)
+if [ -z "$base" ]; then
+  echo "docker/cc: docker/Dockerfile has no FROM ghcr.io/ai-progress-agent/claude-container:<tag> line" >&2
+  exit 1
+fi
+export KIT_DOCKER_DIR=$here KIT_BASE_IMAGE=$base
+
+if [ -n "${KIT_DEV:-}" ]; then
+  KIT_DEV=$(cd "$KIT_DEV" && pwd)
+  export KIT_DEV
+  exec "$KIT_DEV/kit/cc" "$@"
+fi
+
+tag=${base#*:}
+kit=${XDG_CACHE_HOME:-$HOME/.cache}/claude-container/${tag%%@*}
+if [ ! -x "$kit/cc" ]; then
+  # Copy into a new directory, then rename it, so a failed copy leaves no
+  # kit behind for the next run to trust.
+  mkdir -p "$(dirname "$kit")"
+  tmp=$(mktemp -d "$kit.XXXXXX")
+  id=$(docker create "$base")
+  docker cp "$id:/opt/kit/." "$tmp" || { docker rm "$id" >/dev/null; rm -rf "$tmp"; exit 1; }
+  docker rm "$id" >/dev/null
+  [ -e "$kit" ] && rm -rf "$kit"
+  mv "$tmp" "$kit"
+fi
+exec "$kit/cc" "$@"

@@ -1,29 +1,29 @@
-# One container: Claude Code for this repo. Start it with docker/cc, which
-# sets every variable used below.
+# One container: Claude Code for a repo. Start it with the repo's docker/cc,
+# which sets every variable used below.
 #
-# This file holds only what every setup needs. docker/cc adds the host's
-# Claude and git config, each path only if this machine has it. It adds the
-# program's other repos cloned next to this one, read-only. It stacks
-# docker/compose.local.yaml on top when you have one.
+# This file holds only what every repo and every setup needs. The launcher
+# adds the host's Claude and git config, each path only if this machine has
+# it. It adds the program's other repos cloned next to this one, read-only.
+# It stacks the repo's docker/compose.repo.yaml on top, then your
+# docker/compose.local.yaml, for each one that exists.
 #
 # Each host path mounts at the same absolute path inside, so the host's
 # config reads the same in both places. The login, the session state and
 # ~/.claude.json stay in a volume of their own: the host keeps its login in
 # the macOS keychain, which a container cannot reach, and a second writer on
 # the host's ~/.claude.json could corrupt it.
-name: ai-progress-claude
+name: ${PROJECT_NAME:?run docker/cc, not docker compose}
 
 services:
   claude:
     build:
-      context: ..
+      context: ${REPO:?run docker/cc, not docker compose}
       dockerfile: docker/Dockerfile
       args:
         HOST_HOME: ${HOST_HOME:?run docker/cc, not docker compose}
         HOST_USER: ${HOST_USER:?run docker/cc, not docker compose}
-        REPO: ${REPO:?run docker/cc, not docker compose}
-        CLAUDE_VERSION: ${CLAUDE_VERSION:-latest}
-    image: ai-progress-claude:latest
+        REPO: ${REPO}
+    image: ${PROJECT_NAME}:latest
     init: true # reaps the processes Claude spawns
     stdin_open: true # the CLI needs a real terminal
     tty: true
@@ -44,8 +44,8 @@ services:
       - TERM
       - COLORTERM
       - TZ
-      # The repo's mise.toml sets tools and tasks, so mise asks before it
-      # reads the file. This answers yes for this path only.
+      # The repo's mise.toml sets tools and tasks, and maybe hooks, so mise
+      # asks before it reads the file. This answers yes for this path only.
       - MISE_TRUSTED_CONFIG_PATHS=${REPO}
 
     volumes:

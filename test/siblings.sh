@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Checks collect_sibling_repos in docker/cc without Docker. It builds a
+# Checks collect_sibling_repos in the launcher, kit/cc, without Docker. It builds a
 # parent directory of clones and plain folders, then checks that only the
 # clones with this repo's origin owner are mounted, each read-only unless
 # writable_siblings names it.
 set -euo pipefail
 
-# Source docker/cc for the real code. docker/cc sets repo for itself, so the
-# test sets it again below.
-# shellcheck source=docker/cc
-. "$(dirname "$0")/cc"
+# Source the launcher for the real code. It sets repo for itself, so the test
+# sets it again below.
+# shellcheck source=kit/cc
+. "$(dirname "$0")/../kit/cc"
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/cc-siblings-test.XXXXXX")
 trap 'rm -rf "$work"' EXIT
