@@ -2,8 +2,9 @@
 
 `claude-container` runs Claude Code for a repo in a Linux container that
 mirrors your Mac's Claude setup. Your global `CLAUDE.md`, settings, hooks,
-skills, plugins, status line and git identity all work inside, unchanged.
-Claude can write to the repo and to the project's memory, and to little else.
+output styles, skills, agents, plugins, status line and git identity all work
+inside, unchanged. Claude can write to the repo and to the project's memory,
+and to little else.
 
 It is built for Apple Silicon Macs running Docker Desktop. The image is arm64
 only.
@@ -25,7 +26,8 @@ The kit has three parts:
   container. It ships inside the base image at `/opt/kit`. Each repo keeps a
   short stub as `docker/cc`. The stub reads the tag from the `FROM` line,
   copies `/opt/kit` to `~/.cache/claude-container/<tag>` on first use, and runs
-  the launcher from there.
+  the launcher from there. With `XDG_CACHE_HOME` set, the copy goes under it
+  instead of `~/.cache`.
 
 So the `FROM` line in a repo's `docker/Dockerfile` is the one version pin. It
 pins the image and the launcher together.
@@ -36,6 +38,10 @@ Settings stack in three levels, and a later level wins:
 2. The repo's committed files: `docker/kit.sh` and `docker/compose.repo.yaml`.
 3. Your uncommitted files: `docker/cc.local` and `docker/compose.local.yaml`.
    See [Your machine's own setup](#your-machines-own-setup).
+
+One exception: the launcher reads `docker/cc.local` after it has named the
+project and found the sibling repos. So `docker/cc.local` cannot change
+`project_name` or `writable_siblings`. Set those in `docker/kit.sh`.
 
 ## Set up a repo
 
@@ -49,26 +55,33 @@ Settings stack in three levels, and a later level wins:
    FROM ghcr.io/ai-progress-agent/claude-container:v1.0.0@sha256:<digest>
    ```
 
+   Keep the image name in lower case, as above. The stub looks for that exact
+   name, and stops when the `FROM` line has no match.
+
    Add what the repo needs from apt before `add-user`, while the build is
    still root.
+
 3. Copy
    [`example/docker/Dockerfile.dockerignore`](example/docker/Dockerfile.dockerignore)
-   too. The build then sees only `mise.toml` and `mise.local.toml`, so the
+   to `docker/Dockerfile.dockerignore` too. The build context is the repo
+   root, and the build then sees only `mise.toml` and `mise.local.toml`, so the
    rest of the repo stays out of the image.
 4. Add `docker/kit.sh` if a default does not fit. Each setting is optional:
 
-   | Setting              | Default                                        | Sets                                                     |
-   | -------------------- | ---------------------------------------------- | -------------------------------------------------------- |
-   | `project_name`       | the main clone's directory name, plus `-claude` | the image name and the volumes, the login among them     |
-   | `writable_siblings`  | none                                           | the sibling repos that mount writable                    |
-   | `start_commands`     | `true`, which does nothing                     | shell commands run inside at each start, before Claude   |
-   | `agent_browser_port` | the `cdp` port in the repo's `agent-browser.json` | the Mac Chrome port that `agent-browser` drives          |
+   | Setting              | Default                                                       | Sets                                                                                                |
+   | -------------------- | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+   | `project_name`       | the main clone's directory name in lower case, plus `-claude` | the image name and the volumes, the login among them                                                |
+   | `writable_siblings`  | none                                                          | the sibling repos that mount writable, as a bash array of directory names, such as `(plugins-repo)` |
+   | `start_commands`     | `true`, which does nothing                                    | shell commands run inside at each start, before Claude                                              |
+   | `agent_browser_port` | the `cdp` port in the repo's `agent-browser.json`             | the Mac Chrome port that `agent-browser` drives                                                     |
 
    Two repos with one `project_name` share a login and an image, so give each
-   repo its own. The launcher sources `kit.sh` inside a function, so set each
-   value by plain assignment, as in
+   repo its own. A worktree takes its main clone's name, so it shares that
+   clone's login and image. The launcher sources `kit.sh` inside a function,
+   so set each value by plain assignment, as in
    [`example/docker/kit.sh`](example/docker/kit.sh). A `local` or a `declare`
    without `-g` is lost.
+
 5. Add `docker/compose.repo.yaml` for the repo's own volumes and environment
    variables. For example, a repo that installs `node_modules` at start keeps
    them in a Linux-only volume:
@@ -84,7 +97,12 @@ Settings stack in three levels, and a later level wins:
 
    Docker creates a volume's directory as root unless the image already has
    it. So name the directory as an extra argument to `add-user`, which
-   creates it owned by your user.
+   creates it owned by your user:
+
+   ```dockerfile
+   RUN /usr/local/libexec/claude-container/add-user "$HOST_USER" "$HOST_HOME" "$REPO/node_modules"
+   ```
+
 6. Add the per-person files to `.gitignore`:
 
    ```gitignore
@@ -104,12 +122,12 @@ Settings stack in three levels, and a later level wins:
 
 ## Daily use
 
-| Command             | What it does                                                    |
-| ------------------- | --------------------------------------------------------------- |
+| Command             | What it does                                                   |
+| ------------------- | -------------------------------------------------------------- |
 | `docker/cc [args]`  | starts Claude inside. The arguments go to `claude` unchanged.  |
-| `docker/cc shell`   | opens a bash prompt in the same container                       |
-| `docker/cc build`   | builds the repo layer. Run it again after `mise.toml` changes.  |
-| `docker/cc upgrade` | rebuilds the repo layer without the cache                       |
+| `docker/cc shell`   | opens a bash prompt in the same container                      |
+| `docker/cc build`   | builds the repo layer. Run it again after `mise.toml` changes. |
+| `docker/cc upgrade` | rebuilds the repo layer without the cache                      |
 
 The first `docker/cc` asks you to sign in. The Mac keeps its Claude login in
 the keychain, which a container cannot read, so the container keeps its own
@@ -121,6 +139,12 @@ Every run starts a fresh container. It runs the repo's `start_commands`, then
 your `local_setup`, and then starts Claude. What lasts between runs is in
 Docker volumes and in the Mac paths the container mounts.
 
+The container runs with no Linux capabilities and with `no-new-privileges`,
+so nothing inside can become root. It is limited to 8 GB of memory and 2048
+processes, so a runaway process cannot starve Docker Desktop's VM. These
+settings are in [`kit/compose.yaml`](kit/compose.yaml), and a repo's
+`docker/compose.repo.yaml` can override the limits.
+
 ## Upgrading
 
 A new Claude Code comes with a new base image. Each Monday, CI rebuilds the
@@ -129,9 +153,9 @@ are at least seven days old. Dependabot then opens a pull request that moves
 the repo's `FROM` line. To upgrade, merge that pull request and run
 `docker/cc build`.
 
-`docker/cc upgrade` moves only what the repo's own `mise.toml` installs as
-`latest`. Claude and the base image's tools stay at the versions the `FROM`
-line pins.
+`docker/cc upgrade` moves only what the repo's own `mise.toml` and your
+`mise.local.toml` install as `latest`. Claude and the base image's tools stay
+at the versions the `FROM` line pins.
 
 Autoupdate is off inside. `claude update` still downloads a new Claude, about
 245 MB, into `~/.local/share/claude`. But that directory goes when the
@@ -146,7 +170,8 @@ because the image puts Claude at `/usr/local/bin/claude`.
 Each Mac path mounts at the same absolute path inside the container. So
 plugin paths, hook paths, dotfiles links and worktree paths all resolve
 unchanged. The repo sits at its Mac path too, so a git `includeIf` that picks
-your work email by path still matches.
+your work email by path still matches. The container also takes the Mac's
+time zone, and your terminal's `TERM` and `COLORTERM`.
 
 The launcher mounts the usual Claude Code and git config read-only. That is
 the files and directories under `~/.claude` that hold your settings, plus
@@ -281,6 +306,10 @@ The launcher runs `notify_host` this way:
 notify_host() { terminal-notifier -title Claude -message "Waiting in ${PWD##*/}"; }
 ```
 
+Your Mac's own hooks may call `cc-notify.mjs` by name too. Inside, the image
+puts a `cc-notify.mjs` ahead of `~/bin` on the `PATH` that reads its input and
+does nothing, so those hooks neither fail nor notify twice.
+
 The directory and the loop go when the container does. A container started
 without `docker/cc` has no `/run/cc-notify`, so the hooks drop the event.
 If an admin at your company pushes managed settings to Claude, those
@@ -385,11 +414,11 @@ Three uncommitted files carry what only your machine needs. All three are
 optional, and the repo's `.gitignore` keeps them out of commits. The snippets
 below come from one developer's working setup. Change the paths to yours.
 
-| File                        | What it adds                          | Takes effect          |
-| --------------------------- | ------------------------------------- | --------------------- |
-| `docker/compose.local.yaml` | Mounts and environment variables      | The next `docker/cc`  |
-| `docker/cc.local`           | Commands on the Mac, and setup inside | The next `docker/cc`  |
-| `mise.local.toml`           | Tools installed in the image          | `docker/cc build`     |
+| File                        | What it adds                          | Takes effect         |
+| --------------------------- | ------------------------------------- | -------------------- |
+| `docker/compose.local.yaml` | Mounts and environment variables      | The next `docker/cc` |
+| `docker/cc.local`           | Commands on the Mac, and setup inside | The next `docker/cc` |
+| `mise.local.toml`           | Tools installed in the image          | `docker/cc build`    |
 
 ### `docker/compose.local.yaml`
 
@@ -511,21 +540,21 @@ session does not have it. Anywhere else, call the tool by the full path that
 
 ## When something is missing
 
-| What you see inside                                                  | Why                                                                 | Fix                                                                                   |
-| -------------------------------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `command not found`                                                  | The image does not have the tool                                    | Add it to `mise.local.toml`, then run `docker/cc build`                               |
-| A CLI works on the Mac but is not signed in inside                   | The Mac keeps the login in the keychain                             | Export it in `docker/cc.local`, write it with `local_setup`, then restart `docker/cc` |
-| A link in your config points at a path that is missing               | Nothing mounts the link's target                                    | Mount the target directory in `docker/compose.local.yaml`, then restart `docker/cc`   |
-| A path is there but empty, and owned by root                         | Its source in `docker/compose.local.yaml` is not on the Mac         | Fix the source path in `docker/compose.local.yaml`, then restart `docker/cc`          |
-| A setting you just changed on the Mac is not seen                    | A plain file mounts as it was at start                              | Restart `docker/cc`                                                                   |
-| `git push` or `gh` fails to authenticate                             | `gh` has no login on the Mac                                        | Run `gh auth login` on the Mac, then restart `docker/cc`                              |
-| `could not write config file …/.git/config: Device or resource busy` | `.git/config` is read-only inside                                   | Work without the upstream, as [GitHub operations](#github-operations) says            |
-| A plugin update fails                                                | Plugins mount read-only                                             | Update the plugin on the Mac                                                          |
-| A program repo is not at `../<name>`                                 | It is not cloned next to this one, or its `origin` differs          | Clone it next to this repo from the same GitHub org, then restart `docker/cc`         |
-| A program repo at `../<name>` is missing recent commits              | It cannot fetch inside                                              | Use `gh`, or run `git fetch` in it on the Mac                                         |
-| `agent-browser` cannot connect                                       | No Chrome is open on the Mac on the repo's port                     | Open Chrome on the Mac as [The browser](#the-browser) says                            |
-| `docker/cc: host.docker.internal does not resolve` at start          | The Docker engine is not Docker Desktop                             | Run the container under Docker Desktop                                                |
-| `claude doctor` warns about `~/.local/bin`                           | The image puts Claude at `/usr/local/bin/claude`                    | Nothing: the warning is expected                                                      |
+| What you see inside                                                  | Why                                                         | Fix                                                                                   |
+| -------------------------------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `command not found`                                                  | The image does not have the tool                            | Add it to `mise.local.toml`, then run `docker/cc build`                               |
+| A CLI works on the Mac but is not signed in inside                   | The Mac keeps the login in the keychain                     | Export it in `docker/cc.local`, write it with `local_setup`, then restart `docker/cc` |
+| A link in your config points at a path that is missing               | Nothing mounts the link's target                            | Mount the target directory in `docker/compose.local.yaml`, then restart `docker/cc`   |
+| A path is there but empty, and owned by root                         | Its source in `docker/compose.local.yaml` is not on the Mac | Fix the source path in `docker/compose.local.yaml`, then restart `docker/cc`          |
+| A setting you just changed on the Mac is not seen                    | A plain file mounts as it was at start                      | Restart `docker/cc`                                                                   |
+| `git push` or `gh` fails to authenticate                             | `gh` has no login on the Mac                                | Run `gh auth login` on the Mac, then restart `docker/cc`                              |
+| `could not write config file …/.git/config: Device or resource busy` | `.git/config` is read-only inside                           | Work without the upstream, as [GitHub operations](#github-operations) says            |
+| A plugin update fails                                                | Plugins mount read-only                                     | Update the plugin on the Mac                                                          |
+| A program repo is not at `../<name>`                                 | It is not cloned next to this one, or its `origin` differs  | Clone it next to this repo from the same GitHub org, then restart `docker/cc`         |
+| A program repo at `../<name>` is missing recent commits              | It cannot fetch inside                                      | Use `gh`, or run `git fetch` in it on the Mac                                         |
+| `agent-browser` cannot connect                                       | No Chrome is open on the Mac on the repo's port             | Open Chrome on the Mac as [The browser](#the-browser) says                            |
+| `docker/cc: host.docker.internal does not resolve` at start          | The Docker engine is not Docker Desktop                     | Run the container under Docker Desktop                                                |
+| `claude doctor` warns about `~/.local/bin`                           | The image puts Claude at `/usr/local/bin/claude`            | Nothing: the warning is expected                                                      |
 
 An agent inside the container can edit the three files in
 [Your machine's own setup](#your-machines-own-setup), because they sit in the
@@ -538,14 +567,15 @@ rebuild.
 
 The repo has these parts:
 
-| Path       | What it holds                                                               |
-| ---------- | --------------------------------------------------------------------------- |
-| `Dockerfile` | the base image                                                            |
-| `image/`   | the files the base image installs: the global `mise.toml`, the notification hook, `add-user` and `release-before` |
-| `kit/`     | the launcher and the kit's `compose.yaml`, shipped at `/opt/kit`            |
-| `stub/cc`  | the `docker/cc` each repo copies                                            |
-| `example/` | a repo layer in miniature, which the smoke test builds                      |
-| `test/`    | the tests                                                                   |
+| Path         | What it holds                                                                                                     |
+| ------------ | ----------------------------------------------------------------------------------------------------------------- |
+| `Dockerfile` | the base image                                                                                                    |
+| `image/`     | the files the base image installs: the global `mise.toml`, the notification hook, `add-user` and `release-before` |
+| `kit/`       | the launcher and the kit's `compose.yaml`, shipped at `/opt/kit`                                                  |
+| `stub/cc`    | the `docker/cc` each repo copies                                                                                  |
+| `example/`   | a repo layer in miniature, which the smoke test builds                                                            |
+| `test/`      | the tests                                                                                                         |
+| `.github/`   | the CI and release workflows, and Dependabot's config for the actions and the Debian image                        |
 
 Run the checks with mise:
 
@@ -583,7 +613,11 @@ request: shellcheck, the tests and the smoke build. A release happens two ways:
   the next patch, such as `v1.2.1`. That picks up Claude Code and mise releases
   at least seven days old, newer global tools and Debian's security updates.
   It builds the tag, not `main`, so a change waiting on `main` never ships as
-  a patch.
+  a patch. Running the `release` workflow by hand from the Actions tab does
+  the same at once.
+
+Dependabot bumps the base `Dockerfile`'s Debian digest each week and the
+pinned GitHub Actions each month, each after a seven-day wait.
 
 ## License
 
