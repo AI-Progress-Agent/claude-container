@@ -15,6 +15,7 @@ description = "Run shellcheck and the tests that need no Docker"
 depends = ["check:shell"]
 run = [
   "test/siblings.sh",
+  "test/marketplaces.sh",
   "test/forward.sh",
   "test/kit.sh",
 ]
@@ -22,7 +23,7 @@ run = [
 # Add a new shell script here.
 [tasks."check:shell"]
 description = "Run shellcheck over the kit's shell scripts"
-run = "shellcheck -x kit/cc stub/cc image/add-user image/release-before image/cc-forward-notify example/docker/kit.sh test/siblings.sh test/forward.sh test/kit.sh test/smoke.sh"
+run = "shellcheck -x kit/cc stub/cc image/add-user image/release-before image/cc-forward-notify example/docker/kit.sh test/siblings.sh test/marketplaces.sh test/forward.sh test/kit.sh test/smoke.sh"
 
 # Builds the base image as claude-container:dev, the tag KIT_DEV uses. Then
 # builds the example repo's layer on it and checks what a user sees inside.

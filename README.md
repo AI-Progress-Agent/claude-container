@@ -211,6 +211,30 @@ seen.
 
 Each mount you add in `docker/compose.local.yaml` without `:ro` is one more.
 
+### Folder marketplaces
+
+A plugin marketplace added from a folder on the Mac is read from that folder.
+Without it, Claude inside drops the marketplace's plugins. So the launcher
+mounts each such folder read-only, at its own path. It finds them in
+`~/.claude/plugins/known_marketplaces.json`, which lists marketplaces from
+`settings.json` and from `/plugin marketplace add` alike.
+
+The launcher leaves a marketplace out in these cases:
+
+- `skip_marketplaces` in [`docker/cc.local`](#dockercclocal) names it.
+- Its folder is missing on the Mac.
+- The container already sees its folder: the folder is in the repo, in a
+  sibling repo, or in a mount in `docker/compose.local.yaml`.
+
+At start, the launcher prints these lines:
+
+| Line                                                         | What it means                                                             |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------- |
+| `docker/cc: mounted marketplaces read-only: <names>`         | These marketplaces' plugins load inside                                   |
+| `docker/cc: skipped marketplaces: <names>`                   | `skip_marketplaces` keeps these out, so their plugins do not load         |
+| `docker/cc: marketplace <name> has no folder at <path> ...`  | The Mac has no folder at that path, so the plugins do not load            |
+| `docker/cc: jq is missing, so no folder marketplace mounted` | The Mac has no `jq`, which macOS 15 and later ship. No marketplace mounts |
+
 ### Sibling repos
 
 The container can also read the program's other repos, but cannot write to
@@ -450,9 +474,10 @@ below come from one developer's working setup. Change the paths to yours.
 
 The launcher stacks this file on the kit's `compose.yaml` and the repo's
 `docker/compose.repo.yaml`. Add a mount here when your config links into a
-directory the `optional` list does not cover: a dotfiles repo, a plugin
-marketplace that `settings.json` names by a local directory, or a skill's
-state.
+directory the `optional` list does not cover, such as a dotfiles repo or a
+skill's state. A folder marketplace needs no mount here: the launcher mounts
+it. See [Folder marketplaces](#folder-marketplaces). A marketplace mount
+already in this file keeps working, and you can delete it.
 
 ```yaml
 services:
@@ -461,9 +486,6 @@ services:
       # The dotfiles repo. ~/.claude/CLAUDE.md, the settings and ~/bin's
       # scripts are links into it.
       - ${HOST_HOME}/.home-directory:${HOST_HOME}/.home-directory:ro
-      # settings.json names this marketplace by a local directory, and its
-      # plugins fail to load without it.
-      - ${HOST_HOME}/src/my-marketplace:${HOST_HOME}/src/my-marketplace:ro
       # A skill's hooks keep their log here, so this one is writable.
       - ${HOST_HOME}/.claude/state/writing-line:${HOST_HOME}/.claude/state/writing-line
 ```
@@ -484,7 +506,7 @@ the repo's `docker/` directory.
 The launcher sources this shell file on the Mac before the container starts.
 It sources the file inside a function. So `declare` and `typeset` need `-g`
 to set a variable that the launcher still sees afterwards. `$@` holds the
-arguments that go to Claude or bash. Use the file for three things:
+arguments that go to Claude or bash. Use the file for four things:
 
 - Export a value that a variable in `compose.local.yaml` copies. List the
   variable name with no value under `environment:`, and Compose copies it from
@@ -493,6 +515,13 @@ arguments that go to Claude or bash. Use the file for three things:
   the repo's `start_commands` and before Claude starts.
 - Redefine `notify_host`, the command that turns an event inside into a
   notification on the Mac. See [Notifications](#notifications).
+- Name in `skip_marketplaces` each folder marketplace to keep out of this
+  repo's container, such as one that belongs to another client. Use the name
+  `/plugin` shows. See [Folder marketplaces](#folder-marketplaces).
+
+  ```bash
+  skip_marketplaces=(other-client-marketplace)
+  ```
 
 This is where a login that the Mac keeps in the keychain gets handed over. The
 container cannot read the keychain, so the Mac exports the login and the
@@ -576,6 +605,7 @@ session does not have it. Anywhere else, call the tool by the full path that
 | `git push` or `gh` fails to authenticate                             | `gh` has no login on the Mac                                | Run `gh auth login` on the Mac, then restart `docker/cc`                              |
 | `could not write config file …/.git/config: Device or resource busy` | `.git/config` is read-only inside                           | Work without the upstream, as [GitHub operations](#github-operations) says            |
 | A plugin update fails                                                | Plugins mount read-only                                     | Update the plugin on the Mac                                                          |
+| A plugin from a folder marketplace is missing                        | It did not mount, and a start line at `docker/cc` says why  | See [Folder marketplaces](#folder-marketplaces), then restart `docker/cc`             |
 | A program repo is not at `../<name>`                                 | It is not cloned next to this one, or its `origin` differs  | Clone it next to this repo from the same GitHub org, then restart `docker/cc`         |
 | A program repo at `../<name>` is missing recent commits              | It cannot fetch inside                                      | Use `gh`, or run `git fetch` in it on the Mac                                         |
 | `agent-browser` cannot connect                                       | No Chrome is open on the Mac on the repo's port             | Open Chrome on the Mac as [The browser](#the-browser) says                            |

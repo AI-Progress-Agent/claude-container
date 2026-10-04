@@ -38,7 +38,9 @@
 #                               starts: export what those variables need, and
 #                               append commands to local_setup to run inside
 #                               before Claude does, and redefine notify_host
-#                               to use your own notifier
+#                               to use your own notifier, and name in
+#                               skip_marketplaces the folder marketplaces to
+#                               keep out
 #
 # KIT_DEV, set to the path of a claude-container checkout, tries a kit change
 # on a real repo before a release. The stub runs that checkout's launcher,
@@ -98,6 +100,7 @@ main() {
   export_gh_token
   export_timezone
   load_local_overrides "$@"
+  collect_marketplaces
   start_notify_watcher
   run_container "$program" "$@"
 }
@@ -242,7 +245,8 @@ collect_host_mounts() {
   # Host config to mirror, each read-only at its own path inside. A path this
   # machine does not have is left out, so any Claude setup runs as it is.
   # Links resolve only if their targets are mounted too: mount a dotfiles
-  # repo or a directory marketplace in docker/compose.local.yaml.
+  # repo in docker/compose.local.yaml. collect_marketplaces mounts the
+  # folders that plugin marketplaces are read from.
   local optional=(
     .claude/CLAUDE.md
     .claude/settings.json
@@ -427,15 +431,115 @@ export_timezone() {
   export TZ
 }
 
-# Sets local_setup, the commands to run inside before Claude. docker/cc.local
-# can change it, export variables, and redefine notify_host. It gets the
-# arguments for Claude or bash as $@.
+# Sets local_setup, the commands to run inside before Claude, and
+# skip_marketplaces, the names of the folder marketplaces to keep out.
+# docker/cc.local can change both, export variables, and redefine
+# notify_host. It gets the arguments for Claude or bash as $@.
 load_local_overrides() {
   local_setup=true
+  skip_marketplaces=()
   if [ -f "$docker_dir/cc.local" ]; then
     # shellcheck source=/dev/null
     . "$docker_dir/cc.local"
   fi
+}
+
+# Adds to mounts, read-only at its own path, each folder that a plugin
+# marketplace is read from on the Mac. Claude inside drops a marketplace's
+# plugins when it cannot read the folder. known_marketplaces.json lists
+# every marketplace, from settings.json and from /plugin marketplace add
+# alike. Those with a source of "directory" are the folders.
+#
+# A marketplace named in skip_marketplaces stays out, such as one that
+# belongs to another client. So does a folder the container already sees:
+# one at or under the repo, a sibling repo, or a bind mount in the compose
+# files, compose.local.yaml among them. A second mount there adds nothing,
+# and under a writable mount it would turn the folder read-only.
+collect_marketplaces() {
+  local file=$HOME/.claude/plugins/known_marketplaces.json
+  [ -f "$file" ] || return 0
+  if ! command -v jq >/dev/null; then
+    echo "docker/cc: jq is missing, so no folder marketplace mounted and their plugins will not load" >&2
+    return 0
+  fi
+  local entries
+  # Sorted by path, so a folder inside another marketplace's folder comes
+  # after it, and counts as visible.
+  if ! entries=$(jq -r 'to_entries
+      | map(select(.value.source.source == "directory")
+        | [.key, (.value.installLocation // .value.source.path)])
+      | sort_by(.[1])[] | @tsv' "$file"); then
+    echo "docker/cc: $file does not read as JSON, so no folder marketplace mounted" >&2
+    return 0
+  fi
+  local name path arg visible=("$repo") compose_read="" mounted=() skipped=()
+  for arg in ${mounts[@]+"${mounts[@]}"}; do
+    [ "$arg" = -v ] || visible+=("$(mount_target "$arg")")
+  done
+  while IFS=$'\t' read -r name path; do
+    [ -n "$name" ] || continue
+    if is_skipped_marketplace "$name"; then
+      skipped+=("$name")
+      continue
+    fi
+    if [ ! -d "$path" ]; then
+      echo "docker/cc: marketplace $name has no folder at $path on the Mac, so its plugins will not load" >&2
+      continue
+    fi
+    # Only a marketplace to mount needs the compose files read.
+    if [ -z "$compose_read" ]; then
+      compose_read=1
+      while IFS= read -r arg; do
+        visible+=("$arg")
+      done < <(compose_bind_targets)
+    fi
+    is_under_any "$path" "${visible[@]}" && continue
+    mounts+=(-v "$path:$path:ro")
+    visible+=("$path")
+    mounted+=("$name")
+  done <<<"$entries"
+  if [ ${#mounted[@]} -gt 0 ]; then
+    echo "docker/cc: mounted marketplaces read-only: ${mounted[*]}" >&2
+  fi
+  if [ ${#skipped[@]} -gt 0 ]; then
+    echo "docker/cc: skipped marketplaces: ${skipped[*]}" >&2
+  fi
+}
+
+# Succeeds when $1 is named in skip_marketplaces.
+is_skipped_marketplace() {
+  local name
+  for name in ${skip_marketplaces[@]+"${skip_marketplaces[@]}"}; do
+    [ "$name" = "$1" ] && return 0
+  done
+  return 1
+}
+
+# Prints the path inside of the -v argument $1, source:target or
+# source:target:ro.
+mount_target() {
+  local target=${1#*:}
+  printf '%s\n' "${target%:ro}"
+}
+
+# Prints the path inside of each bind mount the compose files give the
+# claude service. A named volume, such as the login's, holds none of the
+# Mac's files, so it does not count.
+compose_bind_targets() {
+  "${compose[@]}" config --format json 2>/dev/null |
+    jq -r '.services.claude.volumes[]? | select(.type == "bind") | .target' 2>/dev/null || true
+}
+
+# Succeeds when the path $1 is one of the other arguments, or under one.
+is_under_any() {
+  local path=$1 dir
+  shift
+  for dir in "$@"; do
+    if [ "$path" = "$dir" ] || [ "${path#"$dir"/}" != "$path" ]; then
+      return 0
+    fi
+  done
+  return 1
 }
 
 # The image's managed settings hook Stop and Notification to drop each event
