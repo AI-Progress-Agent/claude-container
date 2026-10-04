@@ -1351,6 +1351,9 @@ watch_events() {
     done
     sleep 0.5
   done
+  # The bash that macOS ships, 3.2, runs the EXIT trap of a function started
+  # with & only when the function calls exit.
+  exit
 }
 
 # Waits for compose to end, clears the flags, and runs the last
