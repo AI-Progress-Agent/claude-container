@@ -7,6 +7,7 @@ the Mac. Only a folder inside a writable mount needs the mount.
 from __future__ import annotations
 
 import shutil
+from pathlib import Path
 
 import pytest
 from harness import MAIN_GUARDED, Kit, folder_mounts, hooks_mounts, ignores_case, read_only
@@ -224,3 +225,27 @@ def test_hooks_folder_a_branch_switch_turns_on_moves_aside(kit: Kit) -> None:
     assert run.returncode == 0, run.stderr
     assert f"  {repo / '.x-hooks'}" in run.lines()
     assert (repo / ".x-hooks.cc-blocked").is_dir()
+
+
+@pytest.mark.parametrize("trick", ["link", "worktree"])
+def test_hooks_folder_it_cannot_move_safely_cuts_the_worktree_off(kit: Kit, trick: str) -> None:
+    """The container can make a new worktree's hooks folder one the launcher cannot guard.
+
+    A link inside a writable mount moves aside, so git on the Mac finds no
+    folder. A worktree inside the folder leaves no safe folder to move, so
+    the new worktree's .git file moves aside.
+    """
+    repo = kit.main_clone()
+    (repo / ".husky/_").mkdir(parents=True)
+    kit.git("-C", repo, "config", "core.hooksPath", ".husky/_")
+    new = repo / ".claude/worktrees/new"
+    make = {
+        "link": f"mkdir -p {repo}/real-hooks {new}/.husky\nln -s {repo}/real-hooks {new}/.husky/_",
+        "worktree": f"git -C {repo} worktree add -q {new}/.husky/_/inner",
+    }[trick]
+    kit.on_run(f"git -C {repo} worktree add -q {new}\n{make}\n")
+    run = kit.run(repo)
+    assert run.returncode == 0, run.stderr
+    moved = {"link": new / ".husky/_", "worktree": new / ".git"}[trick]
+    assert f"  {moved}" in run.lines()
+    assert Path(f"{moved}.cc-blocked").exists() or Path(f"{moved}.cc-blocked").is_symlink()

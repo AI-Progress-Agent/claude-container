@@ -31,11 +31,13 @@ class Place:
     path: str
     # The index in Reach.real_roots of the writable mount it sits in. None
     # when the launcher cannot guard it.
-    root: int | None
+    mount: int | None
 
 
 @dataclass(frozen=True)
 class Reach:
+    """The writable mounts, and the read-only mounts that sit in them."""
+
     # Each writable mount as the draft names it, and its real path at the
     # same index.
     typed_roots: tuple[str, ...]
@@ -70,22 +72,22 @@ class Reach:
         """Where the absolute path sits. None when it needs no guard.
 
         It needs none outside every writable mount, or inside a read-only
-        mount. The Place has no root when the launcher cannot guard it, or
+        mount. The Place has no mount when the launcher cannot guard it, or
         when it holds one of holders.
         """
         followed = follow_links(path, self.real_roots)
         if followed is None or holds_any(followed, self.real_roots):
             return Place(followed or path, None)
-        root = next((i for i, r in enumerate(self.real_roots) if is_under(followed, r)), None)
-        if root is None or is_under_any(followed, self.read_only):
+        mount = next((i for i, r in enumerate(self.real_roots) if is_under(followed, r)), None)
+        if mount is None or is_under_any(followed, self.read_only):
             return None
         if holds_any(followed, [*holders, *self.read_only]):
             return Place(followed, None)
-        return Place(followed, root)
+        return Place(followed, mount)
 
     def guard(self, draft: Draft, place: Place) -> None:
         """Mounts place's path read-only, as add_git_file_mount does."""
-        assert place.root is not None
+        assert place.mount is not None
         add_git_file_mount(
-            draft, place.path, self.real_roots[place.root], self.typed_roots[place.root]
+            draft, place.path, self.real_roots[place.mount], self.typed_roots[place.mount]
         )

@@ -63,6 +63,36 @@ def real_dir(path: str) -> str | None:
     return os.path.realpath(path)
 
 
+def nearest_is_dir(path: str) -> bool:
+    """Whether the deepest part of path that exists is a folder."""
+    while not os.path.lexists(path):
+        path = os.path.dirname(path)
+    return os.path.isdir(path)
+
+
+def outermost(paths: Iterable[str]) -> list[str]:
+    """Each of paths that sits under none of the others, sorted, once each."""
+    found: list[str] = []
+    # Sorted, a folder comes before each path inside it.
+    for path in sorted(set(paths)):
+        if not is_under_any(path, found):
+            found.append(path)
+    return found
+
+
+def first_link(path: str, roots: Iterable[str]) -> str | None:
+    """The first part of the absolute path, as spelled, that is a symbolic link under one of roots."""
+    roots = list(roots)
+    current = ""
+    for part in path.split("/"):
+        if not part:
+            continue
+        current = f"{current}/{part}"
+        if os.path.islink(current) and is_under_any(current, roots):
+            return current
+    return None
+
+
 def children(folder: str) -> list[str]:
     """The path of each entry in folder, sorted, as a shell's * lists them."""
     try:

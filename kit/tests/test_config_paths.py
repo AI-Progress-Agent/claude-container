@@ -140,6 +140,10 @@ def test_included_file_through_a_link_is_refused(kit: Kit) -> None:
         ("core.sshCommand", "ssh -F tools/ssh.cfg", "tools/ssh.cfg", "app/tools/ssh.cfg"),
         ("diff.x.textconv", "conv --map=tools/map.txt", "tools/map.txt", "app/tools/map.txt"),
         ("credential.helper", "!sh tools/cred.sh", "tools/cred.sh", "app/tools/cred.sh"),
+        # An alias named path is a shell command like any other.
+        ("alias.path", "!cd scripts && ./run.sh", "scripts/run.sh", "app/scripts"),
+        # A cd goes from the folder of the cd before it.
+        ("alias.deep", "!cd a && cd b && ./x", "a/b/x", "app/a"),
     ],
 )
 def test_path_a_command_value_names_mounts_read_only(
@@ -185,6 +189,8 @@ def test_value_with_no_word_inside_a_writable_mount_adds_nothing(
         (".", "{repo}"),
         ("./tools/fsm.sh", "{repo}/tools/fsm.sh"),
         ("sh tools-link/fsm.sh", "{repo}/tools-link/fsm.sh"),
+        # A folder that a cd names is a path, with or without a /.
+        ("cd missing && ./fsm.sh", "{repo}/missing"),
     ],
 )
 def test_path_it_cannot_guard_stops_the_start(kit: Kit, value: str, path: str) -> None:
@@ -192,6 +198,7 @@ def test_path_it_cannot_guard_stops_the_start(kit: Kit, value: str, path: str) -
     (kit.work / "real").mkdir()
     (kit.work / "real/fsm.sh").write_text("")
     (repo / "tools-link").symlink_to(kit.work / "real")
+    (repo / "fsm.sh").write_text("")
     kit.git("-C", repo, "config", "core.fsmonitor", value)
     assert refused(plan(kit, repo)) == [
         f"  {repo}: core.fsmonitor = {value} names {path.format(repo=repo)}"
