@@ -158,7 +158,14 @@ export_compose_env() {
   # Not GIT_COMMON_DIR: git reads that name, and would then send every git
   # command here to this repo.
   REPO_GIT=$(repo_git_dir)
-  export REPO_GIT
+  # Below the clone's root, git inside stops at the repo's mount and never
+  # finds the clone's .git. Nothing inside needs to write it, so it mounts
+  # read-only there.
+  REPO_GIT_MODE=rw
+  if [ -n "$(git -C "$repo" rev-parse --show-prefix 2>/dev/null)" ]; then
+    REPO_GIT_MODE=ro
+  fi
+  export REPO_GIT REPO_GIT_MODE
   export HOST_HOME=$HOME
   HOST_USER=$(id -un)
   export HOST_USER

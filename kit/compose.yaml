@@ -57,9 +57,10 @@ services:
       # The repo's git directory. In the main clone it is the repo's own
       # .git, already mounted above. In a linked worktree it is the main
       # clone's .git, which holds the worktree's commits, branches and index.
-      # The launcher also mounts the files that lead a worktree's git here
+      # From a directory below the clone's root, it mounts read-only. The
+      # launcher also mounts the files that lead a worktree's git here
       # read-only, so the container cannot point git elsewhere.
-      - ${REPO_GIT:?run docker/cc, not docker compose}:${REPO_GIT}
+      - ${REPO_GIT:?run docker/cc, not docker compose}:${REPO_GIT}:${REPO_GIT_MODE}
       # Except the two places git reads commands from. A hook or a config
       # entry such as core.fsmonitor written here would run on the Mac at
       # its next git command, and git status would not show it. Commits and
