@@ -2,7 +2,7 @@
 # Claude Code for this repo, in a container: run `docker/cc`, or
 # `docker/cc shell`, `build` or `upgrade`. This file is the claude-container
 # stub, the same in every repo. Copy it from the kit's stub/cc rather than
-# edit it here: the repo's own settings go in docker/kit.sh.
+# edit it here: the repo's own settings go in docker/kit.toml.
 #
 # The image that docker/Dockerfile's FROM line names holds the launcher, in
 # /opt/kit. On the first run for each tag, this copies that directory to
