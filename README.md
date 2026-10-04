@@ -826,15 +826,17 @@ The repo has these parts:
 | ------------ | ----------------------------------------------------------------------------------------------------------------- |
 | `Dockerfile` | the base image                                                                                                    |
 | `image/`     | the files the base image installs: the global `mise.toml`, the notification hook, `add-user` and `release-before` |
-| `kit/`       | the launcher and the kit's `compose.yaml`, shipped at `/opt/kit`                                                  |
+| `kit/`       | the launcher and the kit's `compose.yaml`, shipped at `/opt/kit`, and a uv project with the pytest tests          |
 | `stub/cc`    | the `docker/cc` each repo copies                                                                                  |
 | `example/`   | a repo layer in miniature, which the smoke test builds                                                            |
-| `test/`      | the tests                                                                                                         |
+| `test/`      | the bash tests and the smoke test                                                                                 |
 | `.github/`   | the CI and release workflows, and Dependabot's config (see [Releases](#releases))                                 |
 
 Run the checks with mise:
 
-- `mise run check` runs shellcheck and the tests that need no Docker.
+- `mise run check` runs shellcheck, ruff, basedpyright and the tests that need
+  no Docker. The pytest tests in `kit/tests` run the launcher through the stub
+  with a fake `docker`. The image leaves them out.
 - `mise run build` builds the base image as `claude-container:dev`, builds the
   example repo's layer on it, and smoke-tests what the user sees inside.
 

@@ -1,0 +1,81 @@
+"""The stub, stub/cc: it copies the image's kit once per tag and runs it.
+
+Here each kit's launcher is a fake that prints which kit it is and what the
+stub handed it.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from harness import BASE_IMAGE, Kit
+
+FAKE_LAUNCHER = """#!/usr/bin/env bash
+echo "{name} $KIT_DOCKER_DIR $KIT_BASE_IMAGE ${{KIT_DEV:-}} $*"
+"""
+
+
+@pytest.fixture
+def fake_kits(kit: Kit) -> tuple[Path, Path]:
+    """An image's kit and a KIT_DEV checkout, each with a fake launcher."""
+    image = kit.work / "image-kit"
+    dev = kit.work / "dev"
+    for name, folder in (("image", image), ("dev", dev / "kit")):
+        folder.mkdir(parents=True)
+        (folder / "cc").write_text(FAKE_LAUNCHER.format(name=name))
+        (folder / "cc").chmod(0o755)
+    kit.env["IMAGE_KIT"] = str(image)
+    return image, dev
+
+
+@pytest.mark.usefixtures("fake_kits")
+def test_first_run_copies_the_images_kit_into_the_cache(kit: Kit) -> None:
+    repo = kit.work / "repo"
+    run = kit.run(repo, "shell", "--x")
+    assert run.returncode == 0, run.stderr
+    assert run.stdout == f"image {repo / 'docker'} {BASE_IMAGE}  shell --x\n"
+    cached = kit.cache / "claude-container/v1.2.3"
+    assert (cached / "cc").is_file()
+    assert ["create", BASE_IMAGE] in [c.argv for c in run.calls]
+    # No temporary copy is left beside it.
+    assert [p.name for p in cached.parent.iterdir()] == ["v1.2.3"]
+
+
+@pytest.mark.usefixtures("fake_kits")
+def test_a_kit_without_its_launcher_is_replaced(kit: Kit) -> None:
+    repo = kit.work / "repo"
+    kit.run(repo)
+    (kit.cache / "claude-container/v1.2.3/cc").unlink()
+    run = kit.run(repo)
+    assert run.stdout.startswith("image ")
+    assert (kit.cache / "claude-container/v1.2.3/cc").is_file()
+
+
+@pytest.mark.usefixtures("fake_kits")
+def test_a_later_run_uses_the_cached_kit(kit: Kit) -> None:
+    repo = kit.work / "repo"
+    kit.run(repo)
+    run = kit.run(repo)
+    assert run.stdout.startswith("image ")
+    assert run.calls == []
+
+
+def test_kit_dev_runs_the_checkouts_launcher_by_its_absolute_path(
+    kit: Kit, fake_kits: tuple[Path, Path]
+) -> None:
+    _, dev = fake_kits
+    repo = kit.work / "repo"
+    kit.install(repo)
+    run = kit.run_command([Path("repo/docker/cc"), "build"], kit.work, {"KIT_DEV": "dev"})
+    assert run.stdout == f"dev {repo / 'docker'} {BASE_IMAGE} {dev} build\n"
+
+
+@pytest.mark.usefixtures("fake_kits")
+def test_another_base_image_stops_the_stub_before_docker(kit: Kit) -> None:
+    repo = kit.work / "repo"
+    kit.install(repo, base_image="debian:bookworm-slim")
+    run = kit.run(repo)
+    assert run.returncode != 0
+    assert "has no FROM ghcr.io/ai-progress-agent/claude-container:<tag> line" in run.stderr
+    assert run.calls == []
