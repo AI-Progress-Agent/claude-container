@@ -101,6 +101,7 @@ main() {
   export_timezone
   load_local_overrides "$@"
   collect_nested_clones
+  collect_hooks_paths
   collect_folder_mounts
   refuse_git_pointers
   collect_marketplaces
@@ -460,11 +461,7 @@ names_dir() {
 named_dir() {
   local name
   name=$(sed -n '1s/^gitdir: //;1p' "$1" 2>/dev/null) && [ -n "$name" ] || return 1
-  case $name in
-    /*) ;;
-    *) name=$2/$name ;;
-  esac
-  real_dir "$name"
+  real_dir "$(absolute_path "$name" "$2")"
 }
 
 # Prints the real path of the directory $1, each name in it spelled as on
@@ -633,6 +630,178 @@ collect_nested_clones() {
   fi
 }
 
+# Adds to mounts, read-only at its own path, the folder that core.hooksPath
+# names for each worktree. Only a folder inside a writable mount mounts. Git
+# on the Mac runs hooks from there, so a hook written inside would run on the
+# Mac. Husky's .gitignore in the folder leaves out every file, so git status
+# would not show it. The worktrees are those of each guarded git directory: the
+# repo's, each writable sibling's, each nested clone's and each submodule's.
+# The value comes from any config git reads, the global one among them.
+#
+# Git resolves a relative value in the worktree, and in a bare repo's git
+# directory. A missing folder is made empty on the Mac first, and stays after
+# the session. A folder that is already read-only, such as .git/hooks, needs
+# nothing new. collect_folder_mounts then mounts each folder above it.
+#
+# The launcher cannot guard some folders. It names the worktree and the value
+# of each one, and exits before the container starts. Each one is:
+#
+#   - a writable mount, or a folder that holds one
+#   - inside a writable mount, and holds its worktree or a read-only mount
+#   - reached through a symbolic link inside a writable mount. The container
+#     could point the link elsewhere.
+#   - a path through a file, which cannot be a folder
+#
+# It decides on every worktree before it makes a folder, so a refused start
+# makes none.
+collect_hooks_paths() {
+  local typed_roots=() real_roots=() read_only=() refused=() hooks=()
+  local arg dir worktree value folder real root i
+  while IFS= read -r dir; do
+    real=$(real_dir "$dir") || continue
+    typed_roots+=("$dir")
+    real_roots+=("$real")
+  done < <(writable_mounts)
+  for arg in ${mounts[@]+"${mounts[@]}"}; do
+    case $arg in *:ro) ;; *) continue ;; esac
+    dir=$(mount_target "$arg")
+    read_only+=("$dir")
+    if [ -d "$dir" ] && real=$(real_dir "$dir") && [ "$real" != "$dir" ]; then
+      read_only+=("$real")
+    fi
+  done
+  # compose.yaml mounts this one.
+  if real=$(real_dir "$REPO_GIT"); then
+    read_only+=("$real/hooks")
+  fi
+  while IFS= read -r worktree; do
+    # Git refuses an empty value, so it runs no hook.
+    value=$(git -C "$worktree" config core.hooksPath 2>/dev/null) && [ -n "$value" ] || continue
+    folder=$(absolute_path "$(git -C "$worktree" config --type=path core.hooksPath)" "$worktree")
+    if ! folder=$(follow_links "$folder" "${real_roots[@]}") ||
+      holds_any "$folder" "${real_roots[@]}"; then
+      refused+=("$worktree: core.hooksPath = $value")
+      continue
+    fi
+    root=$(containing_index "$folder" "${real_roots[@]}") || continue
+    is_under_any "$folder" ${read_only[@]+"${read_only[@]}"} && continue
+    if holds_any "$folder" "$worktree" ${read_only[@]+"${read_only[@]}"} || ! nearest_is_dir "$folder"; then
+      refused+=("$worktree: core.hooksPath = $value")
+      continue
+    fi
+    hooks+=("$folder" "${real_roots[root]}" "${typed_roots[root]}")
+    read_only+=("$folder")
+  done < <(guarded_worktrees)
+  if [ ${#refused[@]} -gt 0 ]; then
+    {
+      echo "docker/cc: core.hooksPath names a folder the launcher cannot mount read-only, so the container did not start:"
+      printf '  %s\n' "${refused[@]}"
+      echo "Point core.hooksPath at a folder below the worktree's root, with no symbolic link on the way. Or unset it."
+    } >&2
+    exit 1
+  fi
+  for ((i = 0; i < ${#hooks[@]}; i += 3)); do
+    mkdir -p "${hooks[i]}"
+    add_git_file_mount "${hooks[i]}" "${hooks[i + 1]}" "${hooks[i + 2]}"
+  done
+}
+
+# Prints the path of each worktree of each guarded git directory, one per
+# line. A bare repo has no worktree, so its git directory stands in for one:
+# git resolves a relative core.hooksPath there. A worktree whose folder is
+# missing is left out.
+#
+# A submodule's git directory lists itself for its checkout, which its
+# core.worktree names, relative to it. Git ignores core.worktree there once
+# guard_git_dir writes a commondir, so this reads it.
+guarded_worktrees() {
+  local git_dir line worktree dir
+  for git_dir in ${guarded_git_dirs[@]+"${guarded_git_dirs[@]}"}; do
+    while IFS= read -r line; do
+      [ "$line" != "${line#worktree }" ] || continue
+      worktree=${line#worktree }
+      if [ "$worktree" = "$git_dir" ] &&
+        dir=$(git config -f "$git_dir/config" core.worktree 2>/dev/null); then
+        worktree=$(absolute_path "$dir" "$git_dir")
+      fi
+      real_dir "$worktree" || true
+    done < <(git --git-dir="$git_dir" worktree list --porcelain)
+  done
+}
+
+# Prints the path $1, made absolute against the directory $2 when relative.
+absolute_path() {
+  case $1 in
+    /*) printf '%s\n' "$1" ;;
+    *) printf '%s\n' "$2/$1" ;;
+  esac
+}
+
+# Prints the path $1 with each symbolic link in it followed, as the kernel
+# follows them. $1 is absolute. A part of it may be missing. Fails when a
+# link sits at or under one of the other arguments, or when links loop.
+follow_links() {
+  local rest=$1 path='' part hops=0
+  shift
+  while [ -n "$rest" ]; do
+    part=${rest%%/*}
+    rest=${rest#"$part"}
+    rest=${rest#/}
+    case $part in
+      '' | .) continue ;;
+      ..)
+        path=${path%/*}
+        continue
+        ;;
+    esac
+    if [ -L "$path/$part" ]; then
+      is_under_any "$path/$part" "$@" && return 1
+      hops=$((hops + 1))
+      [ $hops -le 40 ] || return 1
+      part=$(readlink "$path/$part")
+      case $part in /*) path= ;; esac
+      rest=$part/$rest
+    else
+      path=$path/$part
+    fi
+  done
+  printf '%s\n' "${path:-/}"
+}
+
+# Succeeds when one of the other arguments is the path $1, or under it.
+holds_any() {
+  local dir=$1 path
+  shift
+  for path in "$@"; do
+    is_under_any "$path" "$dir" && return 0
+  done
+  return 1
+}
+
+# Prints the index of the first of the other arguments that the path $1 is,
+# or sits under. Fails when there is none.
+containing_index() {
+  local path=$1 i=0 dir
+  shift
+  for dir in "$@"; do
+    if is_under_any "$path" "$dir"; then
+      printf '%s\n' "$i"
+      return 0
+    fi
+    i=$((i + 1))
+  done
+  return 1
+}
+
+# Succeeds when the deepest part of the path $1 that exists is a directory.
+nearest_is_dir() {
+  local path=$1
+  while ! path_exists "$path"; do
+    path=$(dirname "$path")
+  done
+  [ -d "$path" ]
+}
+
 # Adds to mounts, writable at its own path, each folder above a read-only
 # mount that sits inside a writable mount. Linux lets the container rename a
 # folder that holds a mount. The mount moves with the folder. The container
@@ -650,12 +819,11 @@ collect_nested_clones() {
 # a second time, at the repo's path as typed. Then that copy's folders mount
 # at that path too, because the writable repo mounts there.
 collect_folder_mounts() {
-  local writable=("$repo") mount_points=("$repo" "$REPO_GIT") read_only=() folders=()
+  local writable=() mount_points=("$repo" "$REPO_GIT") read_only=() folders=()
   local arg target root dir
-  if [ "$REPO_GIT_MODE" = rw ]; then
-    writable+=("$REPO_GIT")
-  fi
-  writable+=(${writable_dirs[@]+"${writable_dirs[@]}"})
+  while IFS= read -r dir; do
+    writable+=("$dir")
+  done < <(writable_mounts)
   for arg in ${mounts[@]+"${mounts[@]}"}; do
     [ "$arg" != -v ] || continue
     target=$(mount_target "$arg")
@@ -678,6 +846,19 @@ collect_folder_mounts() {
     is_one_of "$dir" "${mount_points[@]}" && continue
     mounts+=(-v "$dir:$dir")
     mount_points+=("$dir")
+  done
+}
+
+# Prints the path of each writable mount, one per line: the repo, the repo's
+# git directory when it mounts writable, and each writable sibling.
+writable_mounts() {
+  local dir
+  printf '%s\n' "$repo"
+  if [ "$REPO_GIT_MODE" = rw ]; then
+    printf '%s\n' "$REPO_GIT"
+  fi
+  for dir in ${writable_dirs[@]+"${writable_dirs[@]}"}; do
+    printf '%s\n' "$dir"
   done
 }
 
