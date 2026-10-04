@@ -24,16 +24,27 @@ of each one, and the container does not start. Each one is:
     container could swap that folder for a link.
   - a path through a file, which cannot be a folder
 
-It decides on every worktree before it plans a folder."""
+It decides on every worktree before it plans a folder.
+
+During the session, the watcher reads core.hooksPath again in each worktree.
+A worktree made inside, or one whose folder was missing at start, has no
+read-only mount of its hooks folder. Nor does a folder that an
+includeIf "onbranch:" section names once the container switches branch. So
+the watcher moves each such folder inside a writable mount aside, as it moves
+a .git. A folder the launcher could not guard at start stays where it is.
+"""
 
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 
 from launcher import git
 from launcher.draft import Draft, Refused
+from launcher.gitdirs import guarded_worktrees
 from launcher.output import refusal
 from launcher.paths import absolute_path, is_under_any
+from launcher.pointers import PointerScope, blocked_event, move_aside
 from launcher.reach import Place, Reach
 
 
@@ -72,6 +83,28 @@ def collect_hooks_paths(draft: Draft) -> None:
         mounted.append(place.path)
         draft.make_dir(place.path)
         reach.guard(draft, place)
+
+
+def block_hooks_folders(scope: PointerScope, notify: Callable[[str], None]) -> list[str]:
+    """Moves aside each hooks folder inside a writable mount that has no read-only mount.
+
+    The worktrees are those of each guarded git folder now, not at start. A
+    folder may not hold any of them. Each move goes to notify, as
+    block_git_pointers sends it. Returns each moved folder.
+    """
+    worktrees = guarded_worktrees(list(scope.guarded_git_dirs))
+    blocked: list[str] = []
+    for worktree in worktrees:
+        if not git.git("-C", worktree, "config", "core.hooksPath"):
+            continue
+        folder = hooks_folder(worktree)
+        place = None if folder is None else scope.reach.place(folder, worktrees)
+        if place is None or place.root is None or not os.path.isdir(place.path):
+            continue
+        if move_aside(place.path) is not None:
+            blocked.append(place.path)
+            notify(blocked_event(scope.repo, place.path))
+    return blocked
 
 
 def hooks_folder(worktree: str) -> str | None:
