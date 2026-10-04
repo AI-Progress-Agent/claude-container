@@ -610,10 +610,183 @@ git init -q "$repo/x.cc-blocked/dep"
 expect_pointers "$repo/x.cc-blocked/dep/.git" "inside a folder named like a moved one"
 rm -rf "$repo/vendor" "$repo/bare" "$repo/x.cc-blocked"
 
+# The flags. A stand-in for chflags keeps each flagged path as a line in
+# $flag_state. It fails to set or clear the flag on the path in
+# $flag_refused, as chflags does on an exFAT drive. Each launcher's
+# record goes in a folder of the test's own.
+flag_state=$work/flags
+flag_refused=
+: >"$flag_state"
+stand_in_chflags() {
+  case $1 in
+    uchg)
+      [ "$2" != "$flag_refused" ] || return 1
+      grep -qxF "$2" "$flag_state" || printf '%s\n' "$2" >>"$flag_state"
+      ;;
+    nouchg)
+      [ "$2" != "$flag_refused" ] || return 1
+      grep -vxF "$2" "$flag_state" >"$flag_state.new" || true
+      mv "$flag_state.new" "$flag_state"
+      ;;
+  esac
+}
+host_chflags() { stand_in_chflags "$@"; }
+flags_dir=$work/cc-flags
+# Prints the paths it reads, relative to $work, sorted, on one line.
+relative_line() {
+  sed "s#^$work/##" | LC_ALL=C sort | paste -sd ' ' -
+}
+# Prints the guarded files for the repo at $1 as relative_line does.
+guarded_for() {
+  mount_repo "$1"
+  guarded_files | relative_line
+}
+# Prints the flagged files as relative_line does.
+flagged() {
+  relative_line <"$flag_state"
+}
+
+# Each file that mounts read-only on its own inside a writable mount is
+# guarded, by its real path. A folder, such as hooks, is not. Nor is a file
+# outside every writable mount, such as another worktree's .git file seen
+# from a worktree.
+mc=Main-Clone
+main_guarded="$mc/.claude/worktrees/agent/.git $mc/.git/commondir $mc/.git/config \
+$mc/.git/modules/lib/commondir $mc/.git/modules/lib/config $mc/.git/worktrees/agent/commondir \
+$mc/.git/worktrees/other/commondir $mc/.worktrees/other/.git"
+[ "$(guarded_for "$work/Main-Clone")" = "$main_guarded" ] ||
+  fail "from the main clone, guarded files were: $(guarded_for "$work/Main-Clone")"
+want="$mc/.claude/worktrees/agent/.git $mc/.git/commondir $mc/.git/config \
+$mc/.git/modules/lib/commondir $mc/.git/modules/lib/config $mc/.git/worktrees/agent/commondir \
+$mc/.git/worktrees/other/commondir"
+[ "$(guarded_for "$work/Main-Clone/.claude/worktrees/agent")" = "$want" ] ||
+  fail "from a worktree, guarded files were: $(guarded_for "$work/Main-Clone/.claude/worktrees/agent")"
+# From a directory below the clone's root, the clone's .git mounts read-only
+# as a whole, so nothing is guarded.
+[ -z "$(guarded_for "$work/Main-Clone/sub")" ] ||
+  fail "from a subdirectory, guarded files were: $(guarded_for "$work/Main-Clone/sub")"
+
+# With extensions.worktreeConfig on, each config.worktree is guarded. So are
+# a nested clone's config and commondir.
+git -C "$work/Main-Clone" config extensions.worktreeConfig true
+git init -q "$work/Main-Clone/vendor/dep"
+mount_repo "$work/Main-Clone"
+nested_clones=(vendor/dep)
+collect_nested_clones 2>/dev/null
+want=$(guarded_files | relative_line)
+extra="$mc/.git/config.worktree $mc/.git/worktrees/agent/config.worktree \
+$mc/.git/worktrees/other/config.worktree $mc/vendor/dep/.git/commondir $mc/vendor/dep/.git/config"
+[ "$want" = "$(printf '%s %s' "$main_guarded" "$extra" | tr ' ' '\n' | relative_line)" ] ||
+  fail "with worktreeConfig and a nested clone, guarded files were: $want"
+git -C "$work/Main-Clone" config --unset extensions.worktreeConfig
+rm -rf "$work/Main-Clone/vendor"
+
+# Through a link, a file that mounts at two paths is guarded once.
+ln -s "$work/Main-Clone" "$work/Link"
+[ "$(guarded_for "$work/Link")" = "$main_guarded" ] ||
+  fail "through a link, guarded files were: $(guarded_for "$work/Link")"
+rm -f "$work/Link"
+
+# A writable sibling's config and commondir are guarded too.
+git init -q "$work/Sib"
+git -C "$work/Sib" remote add origin git@github.com:program-org/sib.git
+git -C "$work/Main-Clone" remote add origin git@github.com:program-org/main-clone.git
+writable_siblings=(Sib)
+mount_repo "$work/Main-Clone"
+collect_sibling_repos 2>/dev/null
+want=$(guarded_files | relative_line)
+[ "$want" = "$main_guarded Sib/.git/commondir Sib/.git/config" ] ||
+  fail "with a writable sibling, guarded files were: $want"
+writable_siblings=()
+git -C "$work/Main-Clone" remote remove origin
+rm -rf "$work/Sib"
+
+# A start flags each guarded file and records them under this launcher's
+# process ID. The end clears each one and removes the record.
+mount_repo "$work/Main-Clone"
+flag_guarded_files
+[ "$(flagged)" = "$main_guarded" ] || fail "at start, flagged files were: $(flagged)"
+[ "$(relative_line <"$flags_dir/$$")" = "$main_guarded" ] ||
+  fail "the record was: $(cat "$flags_dir/$$")"
+clear_flags 2>/dev/null
+[ -z "$(flagged)" ] || fail "at the end, flagged files were: $(flagged)"
+[ ! -e "$flags_dir/$$" ] || fail "the end left its record"
+
+# A flag already set at start, as a launcher killed before its end leaves
+# it, is cleared at the end.
+printf '%s\n' "$work/Main-Clone/.git/config" >"$flag_state"
+flag_guarded_files
+clear_flags 2>/dev/null
+[ -z "$(flagged)" ] || fail "with a flag set at start, flagged files were: $(flagged)"
+
+# Another live launcher's record keeps each file it names flagged. A record
+# whose launcher has ended does not, and the end removes it.
+sleep 300 >/dev/null 2>&1 &
+live=$!
+(exit 0) &
+ended=$!
+wait "$ended" || true
+config=$work/Main-Clone/.git/config
+commondir=$work/Main-Clone/.git/commondir
+printf '%s\n' "$config" >"$flags_dir/$live"
+printf '%s\n' "$commondir" >"$flags_dir/$ended"
+flag_guarded_files
+clear_flags 2>/dev/null
+[ "$(flagged)" = "$mc/.git/config" ] || fail "with another launcher's record, flagged files were: $(flagged)"
+[ ! -e "$flags_dir/$ended" ] || fail "the end left an ended launcher's record"
+[ -e "$flags_dir/$live" ] || fail "the end removed a live launcher's record"
+
+# When the live launcher ends too, a later end clears its files.
+kill "$live"
+wait "$live" 2>/dev/null || true
+flag_guarded_files
+clear_flags 2>/dev/null
+[ -z "$(flagged)" ] || fail "after the other launcher ended, flagged files were: $(flagged)"
+
+# A launcher that starts during an end records its files before it flags
+# them. The end then looks again, and flags again each one it cleared that
+# the new record names.
+sleep 300 >/dev/null 2>&1 &
+live=$!
+flag_guarded_files
+host_chflags() {
+  if [ "$1" = nouchg ]; then
+    printf '%s\n' "$config" >"$flags_dir/$live"
+  fi
+  stand_in_chflags "$@"
+}
+clear_flags 2>/dev/null
+[ "$(flagged)" = "$mc/.git/config" ] || fail "with a launcher started during the end, flagged files were: $(flagged)"
+host_chflags() { stand_in_chflags "$@"; }
+kill "$live"
+wait "$live" 2>/dev/null || true
+rm -f "$flags_dir/$live"
+: >"$flag_state"
+
+# A file that cannot be flagged stops the start. The launcher names it, and
+# clears each flag it set. It does not ask you to clear the flag it could
+# not set.
+flag_refused=$commondir
+err=$( (flag_guarded_files) 2>&1) && fail "started with a file that cannot be flagged"
+case $err in *"did not start"*"  $commondir"*) ;; *) fail "refusal was: $err" ;; esac
+case $err in *"stay flagged"*) fail "the refusal named a flag to clear: $err" ;; esac
+[ -z "$(flagged)" ] || fail "after the refusal, flagged files were: $(flagged)"
+[ ! -e "$flags_dir/$$" ] || fail "the refusal left its record"
+
+# A flag the end cannot clear is named, for you to clear.
+flag_refused=
+flag_guarded_files
+flag_refused=$commondir
+err=$(clear_flags 2>&1)
+case $err in *"stay flagged"*"  $commondir"*) ;; *) fail "a flag that could not be cleared was named as: ${err:-nothing}" ;; esac
+flag_refused=
+: >"$flag_state"
+
 # A TERM that ends the watcher still runs the last search, names what it
-# moved aside and removes its directory. The watcher has set its traps once
-# it takes the event.
+# moved aside, clears the flags and removes its directory. The watcher has
+# set its traps once it takes the event.
 git init -q "$repo/late"
+flag_guarded_files
 notify_dir=$(mktemp -d "$work/notify.XXXXXX")
 printf '{}\n' >"$notify_dir/event.json"
 watch_events 2>"$work/watch.err" &
@@ -627,6 +800,7 @@ wait "$watcher" || true
 [ -d "$repo/late/.git.cc-blocked" ] || fail "after a TERM, the watcher did not move the clone aside"
 grep -qF "  $repo/late/.git" "$work/watch.err" || fail "after a TERM, the watcher printed: $(cat "$work/watch.err")"
 [ ! -d "$notify_dir" ] || fail "after a TERM, the watcher left $notify_dir"
+[ -z "$(flagged)" ] || fail "after a TERM, flagged files were: $(flagged)"
 rm -rf "$repo/late"
 unset -f notify_host
 

@@ -56,6 +56,13 @@ repo=$(dirname "${docker_dir:-.}")
 # The tag KIT_DEV builds its base image under.
 dev_image=claude-container:dev
 
+# The folder that holds each launcher's record of the files it flags. On the
+# Mac, TMPDIR is the user's own folder, the same in every shell. Each
+# launcher's record is a file named after its process ID.
+flags_dir=${TMPDIR:-/tmp}/cc-flags
+# The files this launcher flags. flag_guarded_files sets it.
+flagged_files=()
+
 main() {
   : "${KIT_DOCKER_DIR:?run docker/cc in a repo, not the launcher itself}"
   load_repo_config
@@ -105,6 +112,7 @@ main() {
   collect_folder_mounts
   refuse_git_pointers
   collect_marketplaces
+  flag_guarded_files
   start_notify_watcher
   run_container "$program" "$@"
 }
@@ -390,7 +398,7 @@ guard_git_dir() {
   if worktree_config_on "$git_dir"; then
     for dir in "$git_dir" "$git_dir"/worktrees/*; do
       if [ -d "$dir" ]; then
-        touch "$dir/config.worktree"
+        path_exists "$dir/config.worktree" || touch "$dir/config.worktree"
         add_git_file_mount "$dir/config.worktree" "$2" "$3"
       fi
     done
@@ -405,7 +413,7 @@ guard_git_dir() {
 # $3 are as add_git_file_mount takes them.
 guard_whole_git_dir() {
   mkdir -p "$1/hooks"
-  touch "$1/config"
+  path_exists "$1/config" || touch "$1/config"
   add_git_file_mount "$1/hooks" "$2" "$3"
   add_git_file_mount "$1/config" "$2" "$3"
   guard_git_dir "$1" "$2" "$3"
@@ -1090,6 +1098,131 @@ compose_bind_targets() {
   jq -r '.services.claude.volumes[]? | select(.type == "bind") | .target' <<<"$config"
 }
 
+# Sets the Mac's immutable flag, uchg, on each file that guarded_files
+# prints. A file mounted read-only on its own sits in a writable folder. The
+# Mac's disk ignores letter case, so a write inside to .git/CONFIG gets past
+# the mount of .git/config and replaces the Mac's file. The flag stops every
+# write, rename and removal, from inside or from the Mac. Root inside cannot
+# clear it. Sets flagged_files, the files this launcher flags.
+#
+# Two sessions can share a file: two worktrees of one clone, or two repos
+# with one writable sibling. So each launcher records the files it flags in
+# flags_dir, in a file named after its process ID. It writes the record
+# before it sets a flag. clear_flags clears a file only when no other live
+# launcher's record names it. A crash that ends the watcher before
+# finish_watch runs leaves its flags set. So a flag already set at start
+# counts as one that a launcher set.
+#
+# chflags can fail, such as on an exFAT drive, a network share, or a file
+# another user owns. Then the launcher clears the flags it set, names each
+# such file, and exits before the container starts. A file it could not
+# flag has no flag of its own to clear.
+flag_guarded_files() {
+  local file failed=()
+  flagged_files=()
+  while IFS= read -r file; do
+    flagged_files+=("$file")
+  done < <(guarded_files)
+  [ ${#flagged_files[@]} -gt 0 ] || return 0
+  mkdir -p "$flags_dir"
+  printf '%s\n' "${flagged_files[@]}" >"$flags_dir/$$"
+  for file in "${flagged_files[@]}"; do
+    host_chflags uchg "$file" 2>/dev/null || failed+=("$file")
+  done
+  [ ${#failed[@]} -gt 0 ] || return 0
+  local flagged=()
+  for file in "${flagged_files[@]}"; do
+    is_one_of "$file" "${failed[@]}" || flagged+=("$file")
+  done
+  flagged_files=(${flagged[@]+"${flagged[@]}"})
+  clear_flags
+  {
+    echo "docker/cc: these could not be flagged read-only on the Mac, so the container did not start:"
+    printf '  %s\n' "${failed[@]}"
+    echo "chflags fails on a file another user owns, and on a disk that is not the Mac's own, such as exFAT or a network share."
+    echo "Move the repo to the Mac's own disk, or give the file to your user with chown."
+  } >&2
+  exit 1
+}
+
+# Prints each guarded file by its real path, one per line, once each. A
+# guarded file mounts read-only on its own inside a writable mount: a
+# source:target:ro entry in mounts whose source is a file and whose target
+# sits inside a writable_mounts path. compose.yaml mounts the repo's
+# .git/config that way too. A folder, such as hooks, needs no flag: a write
+# to .git/HOOKS lands in the read-only mount. A file mounted twice, at its
+# real path and at the repo's path as typed, prints once.
+guarded_files() {
+  local writable=() arg source dir
+  while IFS= read -r dir; do
+    writable+=("$dir")
+  done < <(writable_mounts)
+  for arg in "$REPO_GIT/config:$REPO_GIT/config:ro" ${mounts[@]+"${mounts[@]}"}; do
+    case $arg in *:ro) ;; *) continue ;; esac
+    source=${arg%%:*}
+    if [ -f "$source" ] && is_under_any "$(mount_target "$arg")" "${writable[@]}"; then
+      printf '%s/%s\n' "$(real_dir "$(dirname "$source")")" "$(basename "$source")"
+    fi
+  done | awk '!seen[$0]++'
+}
+
+# Clears the flag on each file in flagged_files that no other live launcher's
+# record names, then removes this launcher's record. A launcher that starts
+# meanwhile may have read the flag as set, and so set nothing. It wrote its
+# record first, so a second look finds it, and each file it names is flagged
+# again. Names each file whose flag stays set.
+clear_flags() {
+  local file held=() cleared=() stuck=()
+  rm -f "$flags_dir/$$"
+  [ ${#flagged_files[@]} -gt 0 ] || return 0
+  while IFS= read -r file; do
+    held+=("$file")
+  done < <(held_files)
+  for file in "${flagged_files[@]}"; do
+    is_one_of "$file" ${held[@]+"${held[@]}"} && continue
+    if host_chflags nouchg "$file" 2>/dev/null; then
+      cleared+=("$file")
+    else
+      stuck+=("$file")
+    fi
+  done
+  held=()
+  while IFS= read -r file; do
+    held+=("$file")
+  done < <(held_files)
+  for file in ${cleared[@]+"${cleared[@]}"}; do
+    if is_one_of "$file" ${held[@]+"${held[@]}"}; then
+      host_chflags uchg "$file" 2>/dev/null || true
+    fi
+  done
+  if [ ${#stuck[@]} -gt 0 ]; then
+    echo "docker/cc: these stay flagged read-only on the Mac. Clear each one with chflags nouchg:" >&2
+    printf '  %s\n' "${stuck[@]}" >&2
+  fi
+}
+
+# Prints each file that another live launcher's record names, one per line.
+# Removes each record whose launcher has ended.
+held_files() {
+  local record pid
+  for record in "$flags_dir"/*; do
+    pid=${record##*/}
+    case $pid in '' | *[!0-9]*) continue ;; esac
+    [ "$pid" != $$ ] || continue
+    if kill -0 "$pid" 2>/dev/null; then
+      cat "$record" 2>/dev/null || true
+    else
+      rm -f "$record"
+    fi
+  done
+}
+
+# Sets or clears the flag $1, uchg or nouchg, on the file $2. The tests
+# redefine it, since Linux has no chflags.
+host_chflags() {
+  chflags "$1" "$2"
+}
+
 # The image's managed settings hook Stop and Notification to drop each event
 # as a file into /run/cc-notify. That is this session's own directory, and a
 # loop on the host hands each file to notify_host. A file drop needs no port,
@@ -1188,14 +1321,16 @@ watch_events() {
 }
 
 # Runs the last block_git_pointers of the session, then names each path it
-# moved aside during the session, and removes notify_dir. watch_events runs
-# it on exit, so it also runs when a hangup or TERM ends the loop.
+# moved aside during the session, clears the flags, and removes notify_dir.
+# watch_events runs it on exit, so it also runs when a hangup or TERM ends
+# the loop.
 finish_watch() {
   block_git_pointers
   if [ ${#blocked[@]} -gt 0 ]; then
     echo "docker/cc: moved aside to .cc-blocked, since each could lead git on the Mac to hooks or a config written inside:" >&2
     printf '  %s\n' "${blocked[@]}" >&2
   fi
+  clear_flags
   rm -rf "$notify_dir"
 }
 
