@@ -448,6 +448,7 @@ It refuses these folders:
 - a writable mount, or a folder that holds one
 - a folder that holds a read-only mount
 - a path through a symbolic link inside a writable mount
+- a path with a `..` that steps out of a folder inside a writable mount
 - a path through a file
 
 It names each worktree and its value:
@@ -455,7 +456,7 @@ It names each worktree and its value:
 ```text
 docker/cc: core.hooksPath names a folder the launcher cannot mount read-only, so the container did not start:
   /path/to/repo: core.hooksPath = .
-Point core.hooksPath at a folder below the worktree's root, with no symbolic link on the way. Or unset it.
+Point core.hooksPath at a folder below the worktree's root, with no symbolic link or .. on the way. Or unset it.
 ```
 
 Linux lets the container rename a folder that holds a read-only mount. The

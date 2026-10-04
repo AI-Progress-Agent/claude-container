@@ -648,6 +648,8 @@ collect_nested_clones() {
 #   - inside a writable mount, and holds its worktree or a read-only mount
 #   - reached through a symbolic link inside a writable mount. The container
 #     could point the link elsewhere.
+#   - reached through a .. out of a folder inside a writable mount. The
+#     container could swap that folder for a link.
 #   - a path through a file, which cannot be a folder
 #
 # It decides on every worktree before it makes a folder, so a refused start
@@ -694,7 +696,7 @@ collect_hooks_paths() {
     {
       echo "docker/cc: core.hooksPath names a folder the launcher cannot mount read-only, so the container did not start:"
       printf '  %s\n' "${refused[@]}"
-      echo "Point core.hooksPath at a folder below the worktree's root, with no symbolic link on the way. Or unset it."
+      echo "Point core.hooksPath at a folder below the worktree's root, with no symbolic link or .. on the way. Or unset it."
     } >&2
     exit 1
   fi
@@ -757,8 +759,8 @@ absolute_path() {
 # Prints the path $1 with each symbolic link in it followed, as the kernel
 # follows them. Each folder that exists is spelled as on disk, which may
 # differ in case from $1. $1 is absolute. A part of it may be missing. Fails
-# when a link sits at or under one of the other arguments, or when links
-# loop.
+# when a link sits at or under one of the other arguments, when a .. steps
+# out of a folder under one of them, or when links loop.
 follow_links() {
   local rest=$1 path='' part hops=0
   shift
@@ -769,6 +771,7 @@ follow_links() {
     case $part in
       '' | .) continue ;;
       ..)
+        is_under_any "${path%/*}" "$@" && return 1
         path=${path%/*}
         continue
         ;;
