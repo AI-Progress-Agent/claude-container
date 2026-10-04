@@ -9,7 +9,9 @@ inside, unchanged. Claude can write to the repo and to the project's memory,
 and to little else.
 
 It is built for Apple Silicon Macs running Docker Desktop. The image is arm64
-only.
+only. The Mac also needs uv, which runs the launcher: `brew install uv`.
+Without it, `docker/cc` stops and says so. uv fetches the launcher's Python
+on the first run if the Mac does not have it.
 
 If something you use on the Mac is missing inside, start at
 [When something is missing](#when-something-is-missing).
@@ -24,8 +26,9 @@ The kit has three parts:
 - **The repo layer**, each repo's `docker/Dockerfile`. It builds `FROM` the
   base image, adds your Mac user with your Mac home path, and installs the
   repo's own `mise.toml`. `example/docker/Dockerfile` is one.
-- **The launcher**, `kit/cc`, which builds the repo layer and starts the
-  container. It ships inside the base image at `/opt/kit`. Each repo keeps a
+- **The launcher**, which builds the repo layer and starts the container. It
+  is a Python package in `kit/src/launcher`, and `kit/cc` runs it with uv. It
+  ships inside the base image at `/opt/kit`. Each repo keeps a
   short stub as `docker/cc`. The stub reads the tag from the `FROM` line,
   copies `/opt/kit` to `~/.cache/claude-container/<tag>` on first use, and runs
   the launcher from there. With `XDG_CACHE_HOME` set, the copy goes under it
@@ -36,8 +39,9 @@ pins the image and the launcher together.
 
 Settings stack in three levels, and a later level wins:
 
-1. The kit's defaults, in `kit/cc` and `kit/compose.yaml`.
-2. The repo's committed files: `docker/kit.sh` and `docker/compose.repo.yaml`.
+1. The kit's defaults, in `kit/src/launcher/settings.py` and
+   `kit/compose.yaml`.
+2. The repo's committed files: `docker/kit.toml` and `docker/compose.repo.yaml`.
 3. Your uncommitted files: `docker/cc.local` and `docker/compose.local.yaml`.
    See [Your machine's own setup](#your-machines-own-setup).
 
@@ -45,7 +49,7 @@ Three limits apply to `docker/cc.local`:
 
 - The launcher reads it after it has named the project and found the sibling
   repos. So it cannot change `project_name` or `writable_siblings`. Set those
-  in `docker/kit.sh`.
+  in `docker/kit.toml`.
 - `docker/cc build` and `docker/cc upgrade` do not read it.
 - The launcher sets `HOST_HOME`, `REPO`, `REPO_GIT`, `REPO_GIT_MODE`,
   `HOST_USER`, `PROJECT_KEY` and `PROJECT_NAME` for Compose before it reads
@@ -56,7 +60,7 @@ Three limits apply to `docker/cc.local`:
 ## Set up a repo
 
 1. Copy [`stub/cc`](stub/cc) to the repo's `docker/cc`, and keep it
-   executable. Do not edit it: the repo's settings go in `docker/kit.sh`.
+   executable. Do not edit it: the repo's settings go in `docker/kit.toml`.
 2. Write `docker/Dockerfile` from
    [`example/docker/Dockerfile`](example/docker/Dockerfile). Pin the newest
    release by tag and digest. Each release's notes give the line to copy:
@@ -76,22 +80,22 @@ Three limits apply to `docker/cc.local`:
    to `docker/Dockerfile.dockerignore` too. The build context is the repo
    root, and the build then sees only `mise.toml` and `mise.local.toml`, so the
    rest of the repo stays out of the image.
-4. Add `docker/kit.sh` if a default does not fit. Each setting is optional:
+4. Add `docker/kit.toml` if a default does not fit. Each setting is optional:
 
    | Setting              | Default                                                                                                                                    | Sets                                                                                                                    |
    | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
-   | `project_name`       | the main clone's directory name plus `-claude`, in lower case, with each character other than `a-z`, `0-9`, `_` and `-` turned into a dash | the image name and the volumes, the login among them                                                                    |
-   | `writable_siblings`  | none                                                                                                                                       | the sibling repos that mount writable, as a bash array of directory names, such as `(plugins-repo)`                     |
-   | `start_commands`     | `true`, which does nothing                                                                                                                 | shell commands run inside at each start, before Claude                                                                  |
-   | `agent_browser_port` | the `cdp` port in the repo's `agent-browser.json`                                                                                          | the Mac Chrome port that `agent-browser` drives                                                                         |
-   | `nested_clones`      | none                                                                                                                                       | the clones and bare repos inside the repo kept on purpose, as a bash array of paths in the repo, such as `(vendor/sdk)` |
+   | `project_name`       | the main clone's directory name plus `-claude`, in lower case, with each character other than `a-z`, `0-9`, `_` and `-` turned into a dash | the image name and the volumes, the login among them, as a string such as `"app-claude"`                                |
+   | `writable_siblings`  | none                                                                                                                                       | the sibling repos that mount writable, as a list of folder names, such as `["plugins-repo"]`                            |
+   | `start_commands`     | none                                                                                                                                       | shell commands run inside at each start, before Claude, as a list such as `["pnpm install"]`. They run joined with `&&` |
+   | `agent_browser_port` | the `cdp` port in the repo's `agent-browser.json`                                                                                          | the Mac Chrome port that `agent-browser` drives, as a number. With `false`, it drives no Chrome                         |
+   | `nested_clones`      | none                                                                                                                                       | the clones and bare repos inside the repo kept on purpose, as a list of paths in the repo, such as `["vendor/sdk"]`     |
 
    Two repos with one `project_name` share a login and an image, so give each
    repo its own. A worktree takes its main clone's name, so it shares that
-   clone's login and image. The launcher sources `kit.sh` inside a function,
-   so set each value by plain assignment, as in
-   [`example/docker/kit.sh`](example/docker/kit.sh). A `local` or a `declare`
-   without `-g` is lost.
+   clone's login and image.
+   [`example/docker/kit.toml`](example/docker/kit.toml) sets each one. The
+   launcher checks the file at each start. An unknown key, or a value of the
+   wrong type, stops the start, and the message names the file and the key.
 
 5. Add `docker/compose.repo.yaml` for the repo's own volumes and environment
    variables. For example, a repo that installs `node_modules` at start keeps
@@ -171,6 +175,39 @@ through the `FROM` line instead.
 `claude doctor` gives warnings about `~/.local/bin`. They are expected,
 because the image puts Claude at `/usr/local/bin/claude`.
 
+### From v1 to v2
+
+v2 replaces the bash launcher with a Python one. Two things change for a
+repo:
+
+- The repo's settings move from `docker/kit.sh` to `docker/kit.toml`.
+- Each person who runs `docker/cc` needs uv on the Mac.
+
+A repo whose `FROM` line names a v1 tag keeps the bash launcher, and its
+`kit.sh` keeps working. To move a repo to v2:
+
+1. Install uv on the Mac: `brew install uv`.
+2. Move the `FROM` line in `docker/Dockerfile` to a v2 tag, or merge
+   Dependabot's pull request that does.
+3. Run `docker/cc`. With a `docker/kit.sh` and no `docker/kit.toml`, the
+   launcher does not start the container. It prints the `kit.toml` with the
+   same settings, below a message that says what to do. Save those lines as
+   `docker/kit.toml`. When `kit.sh` sets only defaults, the message says to
+   make `docker/kit.toml` an empty file.
+4. Delete `docker/kit.sh`, and commit `docker/kit.toml`. Then run `docker/cc`
+   again.
+
+Do not send the output to `docker/kit.toml` with `>`. The shell makes the
+empty file first, and the launcher then reads it in place of `kit.sh`. So the
+container starts with the defaults.
+
+The printed `kit.toml` holds each setting that `kit.sh` changes from its
+default. It also keeps a `project_name` or `agent_browser_port` that `kit.sh`
+sets, even to this clone's default, because another clone can have another
+default. A setting that `kit.sh` builds, such as a path made from `$repo`,
+comes out as the value it had on your Mac. Check those before you commit.
+`docker/cc.local` needs no change.
+
 ## How the container mirrors the Mac
 
 Each Mac path mounts at the same absolute path inside the container. So
@@ -183,8 +220,8 @@ The launcher mounts the usual Claude Code and git config read-only. That is
 the files and directories under `~/.claude` that hold your settings, plus
 `~/.agents`, `~/bin`, `~/.config/ccstatusline`, `~/.gitconfig`,
 `~/.gitconfig.local` and `~/.config/git`. It leaves out any path your machine
-does not have, so it works with any setup. The list is `optional` in
-[`kit/cc`](kit/cc).
+does not have, so it works with any setup. The list is `HOST_CONFIG` in
+[`kit/src/launcher/mounts.py`](kit/src/launcher/mounts.py).
 
 A file in that list can be a link, into a dotfiles repo for example. For a
 link, the launcher mounts the directory that holds the link's target under
@@ -233,13 +270,12 @@ The launcher leaves a marketplace out in these cases:
 
 At start, the launcher prints these lines:
 
-| Line                                                         | What it means                                                             |
-| ------------------------------------------------------------ | ------------------------------------------------------------------------- |
-| `docker/cc: mounted marketplaces read-only: <names>`         | These marketplaces' plugins load inside                                   |
-| `docker/cc: skipped marketplaces: <names>`                   | `skip_marketplaces` keeps these out, so their plugins do not load         |
-| `docker/cc: marketplace <name> has no folder at <path> ...`  | The Mac has no folder at that path, so the plugins do not load            |
-| `docker/cc: jq is missing, so no folder marketplace mounted` | The Mac has no `jq`, which macOS 15 and later ship. No marketplace mounts |
-| `docker/cc: docker compose config failed, ...`               | The compose files did not read, so a marketplace can mount twice          |
+| Line                                                        | What it means                                                     |
+| ----------------------------------------------------------- | ----------------------------------------------------------------- |
+| `docker/cc: mounted marketplaces read-only: <names>`        | These marketplaces' plugins load inside                           |
+| `docker/cc: skipped marketplaces: <names>`                  | `skip_marketplaces` keeps these out, so their plugins do not load |
+| `docker/cc: marketplace <name> has no folder at <path> ...` | The Mac has no folder at that path, so the plugins do not load    |
+| `docker/cc: docker compose config failed, ...`              | The compose files did not read, so a marketplace can mount twice  |
 
 ### Sibling repos
 
@@ -645,7 +681,7 @@ docker/cc: these could lead git on the Mac to hooks or a config written inside, 
 ```
 
 To keep a clone inside the repo, add its path to `nested_clones` in
-`docker/kit.sh` or [`docker/cc.local`](#dockercclocal). Its `.git/hooks`,
+`docker/kit.toml` or [`docker/cc.local`](#dockercclocal). Its `.git/hooks`,
 `.git/config` and the files above then mount read-only, as a writable
 sibling's do. You can add a bare repo, such as a test fixture, in the same
 way. Its own `hooks` and `config` then mount read-only. For a clone inside a
@@ -777,10 +813,17 @@ the repo's `docker/` directory.
 
 ### `docker/cc.local`
 
-The launcher sources this shell file on the Mac before the container starts.
-It sources the file inside a function. So `declare` and `typeset` need `-g`
-to set a variable that the launcher still sees afterwards. `$@` holds the
-arguments that go to Claude or bash. Use the file for five things:
+This file stays bash. A helper,
+[`kit/cc-local.bash`](kit/cc-local.bash), sources it once per session on the
+Mac, before the container starts. The helper then reports to the launcher what
+the file set. It keeps running for the session, and runs the file's
+`notify_host` for each event. So `notify_host` sees the functions and
+variables the file defines.
+
+The helper sources the file inside a function. So `declare` and `typeset`
+need `-g` to set a variable that the launcher or `notify_host` reads
+afterwards. `$@`
+holds the arguments that go to Claude or bash. Use the file for five things:
 
 - Export a value that a variable in `compose.local.yaml` copies. List the
   variable name with no value under `environment:`, and Compose copies it from
@@ -909,11 +952,38 @@ The repo has these parts:
 | ------------ | ----------------------------------------------------------------------------------------------------------------- |
 | `Dockerfile` | the base image                                                                                                    |
 | `image/`     | the files the base image installs: the global `mise.toml`, the notification hook, `add-user` and `release-before` |
-| `kit/`       | the launcher and the kit's `compose.yaml`, shipped at `/opt/kit`, and a uv project with the pytest tests          |
+| `kit/`       | the launcher and the kit's `compose.yaml`, shipped at `/opt/kit`. A uv project, listed below                      |
 | `stub/cc`    | the `docker/cc` each repo copies                                                                                  |
 | `example/`   | a repo layer in miniature, which the smoke test builds                                                            |
-| `test/`      | the bash tests and the smoke test                                                                                 |
+| `test/`      | the smoke test                                                                                                    |
 | `.github/`   | the CI and release workflows, and Dependabot's config (see [Releases](#releases))                                 |
+
+`kit/` holds these files:
+
+| Path                                     | What it holds                                                                                         |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `cc`                                     | the bash entry point the stub runs. It checks for uv, syncs the kit's `.venv`, then runs the launcher |
+| `cc-local.bash`                          | the helper that sources `docker/cc.local` and runs its `notify_host`                                  |
+| `compose.yaml`                           | the container's service, mounts and limits                                                            |
+| `pyproject.toml`, `uv.lock`              | the uv project. The launcher uses only the standard library, and the dev group holds the checks       |
+| `.python-version`                        | the Python that uv runs the launcher with                                                             |
+| `src/__main__.py`                        | what `kit/cc` runs, which calls `launcher.main`                                                       |
+| `src/launcher/main.py`                   | `docker/cc`'s commands                                                                                |
+| `src/launcher/plan.py`                   | the planning step. It reads the Mac's state and returns a `RunPlan`, and writes nothing               |
+| `src/launcher/execute.py`                | the executor. It does each side effect the `RunPlan` names, then runs `docker compose`                |
+| `src/launcher/settings.py`               | `docker/kit.toml` and its checks, and the `kit.toml` it prints for a v1 repo                          |
+| `src/launcher/local.py`                  | `docker/cc.local`, through `cc-local.bash`                                                            |
+| `src/launcher/watcher.py`                | the session's watcher on the Mac: notifications, searches, and the flags at the end                   |
+| `src/launcher/mounts.py`                 | the Mac's Claude and git config, and the folders above each read-only mount                           |
+| `src/launcher/gitdirs.py`, `pointers.py` | the files that lead git to a clone's hooks and config, and the search for new ones                    |
+| `src/launcher/hooks.py`, `configs.py`    | the `core.hooksPath` folder, and what the repo's config names                                         |
+| `src/launcher/flags.py`                  | the Mac's immutable flag on each guarded file                                                         |
+| `src/launcher/clones.py`                 | sibling repos and nested clones                                                                       |
+| `src/launcher/marketplaces.py`           | folder marketplaces                                                                                   |
+| `src/launcher/draft.py`                  | the plan while the planning step builds it, with its mounts and refusals                              |
+| `src/launcher/reach.py`                  | where the container can write, and where a path that git on the Mac reads sits against it             |
+| the rest of `src/launcher/`              | helpers the modules above share: git, paths, compose, the environment and output                      |
+| `tests/`                                 | the pytest tests. The image leaves them out                                                           |
 
 Run the checks with mise:
 
@@ -938,7 +1008,7 @@ plain `docker/cc build` afterwards to go back to the release.
 
 ### Releases
 
-The kit follows semantic versioning. A change to what `kit.sh`, the stub or a
+The kit follows semantic versioning. A change to what `kit.toml`, the stub or a
 repo's `Dockerfile` must contain is a major version, because each repo has to
 change with it.
 

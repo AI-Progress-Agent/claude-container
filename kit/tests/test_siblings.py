@@ -58,7 +58,7 @@ def sibling_mounts(kit: Kit, container: Container, repo: Path) -> list[tuple[str
 
 @pytest.mark.parametrize("where", [".", ".worktrees/wt", ".claude/worktrees/agent"])
 def test_only_clones_with_this_origins_owner_mount(kit: Kit, this: Path, where: str) -> None:
-    # A repo commits docker/kit.sh, so each worktree has it. Here it goes
+    # A repo commits docker/kit.toml, so each worktree has it. Here it goes
     # where the run starts.
     writable(kit, this / where)
     run = kit.run(this / where)

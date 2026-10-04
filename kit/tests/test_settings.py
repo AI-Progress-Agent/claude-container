@@ -5,7 +5,9 @@ from __future__ import annotations
 import tomllib
 
 import pytest
-from harness import Kit
+from harness import KIT, Kit
+
+from launcher.settings import Settings, load_settings
 
 
 def test_without_uv_the_launcher_names_how_to_install_it(kit: Kit) -> None:
@@ -133,3 +135,11 @@ def test_kit_toml_wins_over_a_kit_sh_beside_it(kit: Kit) -> None:
     run = kit.run(repo)
     assert run.returncode == 0, run.stderr
     assert run.container.env["PROJECT_NAME"] == "from-toml"
+
+
+def test_the_example_repos_kit_toml_reads() -> None:
+    example = KIT.parent / "example"
+    # Another clone name, so project_name comes from kit.toml, not the default.
+    settings, warnings = load_settings(str(example), str(example / "docker"), "/src/other")
+    assert settings == Settings(project_name="example-claude")
+    assert warnings == []

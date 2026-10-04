@@ -1,0 +1,17 @@
+# The example repo's settings for the claude-container launcher. Each one is
+# optional; the launcher's settings.py lists them with their defaults. A key
+# the launcher does not know, or a value of the wrong type, stops the start.
+
+# The compose project: the image, and the volumes with the login in them.
+project_name = "example-claude"
+
+# Sibling repos this repo's sessions edit, mounted writable, by folder name.
+writable_siblings = []
+
+# Run inside at each start, joined with &&, before your docker/cc.local's
+# local_setup.
+start_commands = []
+
+# Clones and bare repos kept inside the repo on purpose, by their paths in
+# the repo. A clone inside a writable sibling goes by its absolute path.
+nested_clones = []
