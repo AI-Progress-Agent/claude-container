@@ -407,9 +407,11 @@ mount read-only:
   for deleted, and remove its records from the Mac's `.git`.
 - A `commondir` file in the main clone's `.git`. Git takes the directory it
   names for the `.git`. The launcher first makes one that names the `.git`
-  itself, as `../.git`, which git reads as no `commondir` at all. The file
-  stays after the session. With it, `git rev-parse --git-common-dir` prints
-  an absolute path in the main clone, not `.git`.
+  itself, as `../.git`, which git reads as no `commondir` at all. It does the
+  same in each git directory it guards: a writable sibling's `.git`, a
+  nested clone's, and each submodule's. Each file stays after the session.
+  With it, `git rev-parse --git-common-dir` prints an absolute path in the
+  main clone, not `.git`.
 - With `extensions.worktreeConfig` on, each `config.worktree`. The launcher
   first makes any missing one as an empty file.
 - The `hooks`, `config` and `commondir` of each submodule's git directory,
@@ -425,8 +427,9 @@ A read-only mount needs a file that exists at start. So these stay writable:
   `commondir` or both `objects` and `refs`, which git takes for a `.git`
 - the files of a worktree or a submodule made during the session
 
-The launcher searches the repo for these. At start, it refuses to start if it
-finds one. It names each one, for you to delete:
+The launcher searches the repo and each writable sibling for these. At
+start, it refuses to start if it finds one. It names each one, for you to
+delete:
 
 ```text
 docker/cc: these could lead git on the Mac to hooks or a config written inside, so the container did not start:
@@ -442,15 +445,17 @@ writable sibling, add its absolute path.
 
 During the session, the launcher searches again about every 5 seconds. It
 moves each one it finds aside, to its name plus `.cc-blocked`, and tells
-`notify_host`. When the session ends, it names each one it moved. A worktree
-that `git worktree add` makes inside passes, if its `commondir` names the
-main clone's `.git` and its `config.worktree` stays empty. A submodule that
-`git submodule add` or `git submodule update --init` makes inside does not
-pass: its config is writable, so its `.git` file moves aside. The launcher
-guards only what exists at start, so the same happens to a clone or a
-submodule made on the Mac during the session. Add or initialize submodules
-on the Mac before `docker/cc` starts. Git on the Mac can still read a new
-file in the seconds before the launcher moves it.
+`notify_host`. When the session ends, it names each one it moved.
+
+A worktree that `git worktree add` makes inside passes, with two conditions.
+Its `commondir` must name the main clone's `.git`. Its `config.worktree`
+must stay empty. A submodule made inside does not pass, whether by
+`git submodule add` or `git submodule update --init`. Its config is
+writable, so its `.git` file moves aside. The launcher guards only what
+exists at start, so the same happens to a clone or a submodule made on the
+Mac during the session. Add or initialize submodules on the Mac before
+`docker/cc` starts. Git on the Mac can still read a new file in the seconds
+before the launcher moves it.
 
 So a branch you create inside has no upstream, the remote branch it tracks.
 Git records an upstream in `.git/config`. These commands try to record one:
