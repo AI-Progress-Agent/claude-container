@@ -396,7 +396,7 @@ guard_git_dir() {
   done
   file=$git_dir/commondir
   if ! path_exists "$file"; then
-    printf '../%s\n' "$(basename "$git_dir")" >"$file"
+    make_file_on_mac "$file" "../$(basename "$git_dir")"
   fi
   if commondir_names_itself "$git_dir"; then
     add_git_file_mount "$file" "$2" "$3"
@@ -404,7 +404,8 @@ guard_git_dir() {
   if worktree_config_on "$git_dir"; then
     for dir in "$git_dir" "$git_dir"/worktrees/*; do
       if [ -d "$dir" ]; then
-        path_exists "$dir/config.worktree" || touch "$dir/config.worktree"
+        path_exists "$dir/config.worktree" ||
+          make_file_on_mac "$dir/config.worktree"
         add_git_file_mount "$dir/config.worktree" "$2" "$3"
       fi
     done
@@ -418,8 +419,8 @@ guard_git_dir() {
 # is made on the Mac first. So is a missing config, as an empty file. $2 and
 # $3 are as add_git_file_mount takes them.
 guard_whole_git_dir() {
-  mkdir -p "$1/hooks"
-  path_exists "$1/config" || touch "$1/config"
+  make_dir_on_mac "$1/hooks"
+  path_exists "$1/config" || make_file_on_mac "$1/config"
   add_git_file_mount "$1/hooks" "$2" "$3"
   add_git_file_mount "$1/config" "$2" "$3"
   guard_git_dir "$1" "$2" "$3"
@@ -429,10 +430,36 @@ guard_whole_git_dir() {
 # the files that lead git to them. A missing hooks directory would become an
 # empty one the container could fill, so it is made on the Mac first.
 guard_clone() {
-  mkdir -p "$1/.git/hooks"
+  make_dir_on_mac "$1/.git/hooks"
   mounts+=(-v "$1/.git/hooks:$1/.git/hooks:ro"
     -v "$1/.git/config:$1/.git/config:ro")
   collect_worktree_mounts "$1"
+}
+
+# Makes the folder $1 on the Mac, and each folder above it that is missing.
+# Refuses as refuse_mac_write does when that fails.
+make_dir_on_mac() {
+  mkdir -p "$1" 2>/dev/null || refuse_mac_write "$1"
+}
+
+# Makes the file $1 on the Mac, holding the line $2, or empty when $2 is not
+# given. Refuses as refuse_mac_write does when that fails.
+make_file_on_mac() {
+  { printf '%s' "${2:+$2$'\n'}" >"$1"; } 2>/dev/null || refuse_mac_write "$1"
+}
+
+# Names the file or folder $1 that the launcher could not make on the Mac,
+# and exits before the container starts. A write fails on a read-only disk,
+# and in a folder another user owns. Each guard makes what it needs before
+# any file is flagged, so nothing is left to clear.
+refuse_mac_write() {
+  {
+    echo "docker/cc: could not make this on the Mac, so the container did not start:"
+    printf '  %s\n' "$1"
+    echo "A write fails on a read-only disk, and in a folder another user owns."
+    echo "Move the repo to a writable disk, or give the folder that holds it to your user with chown."
+  } >&2
+  exit 1
 }
 
 # Succeeds when the commondir file in the git directory $1 is a file, not a
@@ -720,7 +747,7 @@ collect_hooks_paths() {
     folder=${hook_dirs[i]}
     is_under_any "$folder" ${mounted[@]+"${mounted[@]}"} && continue
     mounted+=("$folder")
-    mkdir -p "$folder"
+    make_dir_on_mac "$folder"
     add_git_file_mount "$folder" "${real_roots[hook_roots[i]]}" "${typed_roots[hook_roots[i]]}"
   done < <(
     for i in ${hook_dirs[@]+"${!hook_dirs[@]}"}; do
