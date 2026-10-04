@@ -115,6 +115,9 @@ main() {
   collect_folder_mounts
   refuse_git_pointers
   collect_marketplaces
+  # Until the watcher starts, nothing else clears the flags. So an error or
+  # a Ctrl-C before exec clears them here. exec does not run this trap.
+  trap clear_flags EXIT
   flag_guarded_files
   start_notify_watcher
   run_container "$program" "$@"
