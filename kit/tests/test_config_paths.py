@@ -1,8 +1,8 @@
 """What a repo's config names inside a writable mount mounts read-only.
 
 Git on the Mac reads each included config file, and runs each command value.
-A file or folder they name inside a writable mount could be written inside,
-and git on the Mac would then read or run it.
+The container can write a file or folder they name inside a writable mount.
+Git on the Mac would then read or run it.
 """
 
 from __future__ import annotations
@@ -34,16 +34,16 @@ def plan(kit: Kit, repo: Path) -> RunPlan:
     return plan_run(host(kit, repo))
 
 
-def guarded(kit: Kit, plan: RunPlan, repo: Path) -> list[str]:
+def guarded(kit: Kit, result: RunPlan, repo: Path) -> list[str]:
     """The read-only mounts below repo that the config adds."""
-    return [p for p in read_only(kit, plan, repo) if p not in PLAIN_GUARDED]
+    return [p for p in read_only(kit, result, repo) if p not in PLAIN_GUARDED]
 
 
-def refused(plan: RunPlan) -> list[str]:
+def refused(result: RunPlan) -> list[str]:
     """Each line the refusal names."""
-    assert plan.refusal is not None
-    assert plan.refusal.startswith(f"{REFUSAL}\n"), plan.refusal
-    return [line for line in plan.refusal.splitlines() if line.startswith("  ")]
+    assert result.refusal is not None
+    assert result.refusal.startswith(f"{REFUSAL}\n"), result.refusal
+    return [line for line in result.refusal.splitlines() if line.startswith("  ")]
 
 
 # Included files.
@@ -144,6 +144,13 @@ def test_included_file_through_a_link_is_refused(kit: Kit) -> None:
         ("alias.path", "!cd scripts && ./run.sh", "scripts/run.sh", "app/scripts"),
         # A cd goes from the folder of the cd before it.
         ("alias.deep", "!cd a && cd b && ./x", "a/b/x", "app/a"),
+        # A string that a shell runs is a command too.
+        ("alias.sh", "!sh -c 'python3 helper.py'", "helper.py", "app/helper.py"),
+        ("alias.bash", '!bash -c "cd scripts; python3 run.py"', "scripts/run.py", "app/scripts"),
+        # A quoted path with a space is one word when it exists.
+        ("core.fsmonitor", "'tools/my fsm.sh'", "tools/my fsm.sh", "app/tools/my fsm.sh"),
+        # A short option can hold its value.
+        ("core.sshCommand", "ssh -Ftools/ssh.cfg", "tools/ssh.cfg", "app/tools/ssh.cfg"),
     ],
 )
 def test_path_a_command_value_names_mounts_read_only(
@@ -166,6 +173,9 @@ def test_path_a_command_value_names_mounts_read_only(
         ("core.editor", "code --wait"),
         ("alias.top", '!cd "$(git rev-parse --show-toplevel)/tools" && ./x'),
         ("alias.web", "!open https://github.com/org/repo"),
+        # A cd that surely runs moves what follows.
+        ("alias.sure", "!true; cd /tmp && ./bin/run"),
+        ("alias.echo", "!echo cd tools"),
         # git runs these as git subcommands, not as programs.
         ("alias.st", "status tools/fsm.sh"),
         ("credential.helper", "store --file tools/creds"),
@@ -191,14 +201,24 @@ def test_value_with_no_word_inside_a_writable_mount_adds_nothing(
         ("sh tools-link/fsm.sh", "{repo}/tools-link/fsm.sh"),
         # A folder that a cd names is a path, with or without a /.
         ("cd missing && ./fsm.sh", "{repo}/missing"),
+        ("sh -c 'tools/x.sh arg'", "{repo}/tools/x.sh"),
+        # A cd in a subshell does not move what follows.
+        ("(cd {real}); ./bin/run", "{repo}/bin/run"),
+        # A cd after && may not run, so what follows a ; resolves at the root too.
+        ("true && cd {real}; ./bin/run", "{repo}/bin/run"),
+        ("cd {real} | true && ./bin/run", "{repo}/bin/run"),
+        ("cd {real} || ./bin/run", "{repo}/bin/run"),
     ],
 )
 def test_path_it_cannot_guard_stops_the_start(kit: Kit, value: str, path: str) -> None:
     repo = app(kit)
     (kit.work / "real").mkdir()
     (kit.work / "real/fsm.sh").write_text("")
+    (kit.work / "real/bin").mkdir()
+    (kit.work / "real/bin/run").write_text("")
     (repo / "tools-link").symlink_to(kit.work / "real")
     (repo / "fsm.sh").write_text("")
+    value = value.format(real=kit.work / "real")
     kit.git("-C", repo, "config", "core.fsmonitor", value)
     assert refused(plan(kit, repo)) == [
         f"  {repo}: core.fsmonitor = {value} names {path.format(repo=repo)}"

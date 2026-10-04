@@ -550,8 +550,11 @@ a writable mount, these mount read-only:
   one, so the container could make it otherwise. The file stays after the
   session.
 - Each file or folder that a command value names. The launcher splits the
-  value into words, as a shell does. It resolves a relative word against the
-  worktree's root, and against each folder that a `cd` in the value names.
+  value into words, as a shell does. It also splits a string that a shell
+  runs, as in `sh -c 'cmd'`. It resolves a relative word against each folder
+  the shell may be in: the worktree's root, or a folder that a `cd` goes to.
+  A `cd` in a subshell, a pipeline, or after `&&` may leave the shell where
+  it was, so a later word resolves against both folders.
 
 The launcher checks the values of these keys: `core.fsmonitor`,
 `core.editor`, `core.pager`, `pager.*`, `core.sshCommand`, `core.gitProxy`,
@@ -576,6 +579,8 @@ The launcher does not catch everything:
 - It skips a word that the shell expands when the command runs, such as one
   with a `$`. So it does not catch a path that a command builds, such as
   `$(git rev-parse --show-toplevel)/x`.
+- It skips a long option with no `=`, such as `--wait`. It reads a short
+  option's value after its letter, as in `-Ftools/ssh.cfg`.
 - It reads the config only at start. It does not guard a value set during
   the session, or a path made during it.
 - A worktree made inside resolves a relative word against its own root. The
