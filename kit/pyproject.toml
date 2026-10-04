@@ -1,7 +1,7 @@
-# The launcher's Python project. It has no code yet: the tests in tests/
-# pin what the bash launcher, cc, does, so a Python launcher can be held to
-# the same behavior. The Dockerfile copies kit/ into the image, and
-# .dockerignore keeps the tests and the virtual environment out of it.
+# The launcher's Python project. The launcher is the package in src/launcher,
+# and kit/cc runs it. It uses only the standard library, so a run installs
+# nothing. The Dockerfile copies kit/ into the image, and .dockerignore keeps
+# the tests and the virtual environment out of it.
 
 [project]
 name = "claude-container-kit"
@@ -26,6 +26,8 @@ exclude-newer = "7 days"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The unit tests import the launcher.
+pythonpath = ["src"]
 # Each test waits on the launcher's watcher, so the tests run in parallel.
 addopts = ["--strict-markers", "--strict-config", "-n", "auto"]
 
@@ -38,6 +40,12 @@ select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "PT", "PTH"]
 # The formatter wraps code. A long message the launcher prints stays whole,
 # so a search finds it.
 ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# The launcher keeps each path as a string, spelled as git and bash spell it.
+# pathlib would drop a trailing slash or a "." on the way, and the launcher
+# compares paths by their spelling.
+"src/**" = ["PTH"]
 
 [tool.basedpyright]
 typeCheckingMode = "strict"

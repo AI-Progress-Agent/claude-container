@@ -99,16 +99,14 @@ def test_with_nothing_to_mount_the_compose_files_are_not_read(kit: Kit, repo: Pa
     assert run.compose_calls("config") == []
 
 
-def test_without_jq_nothing_mounts_and_one_line_says_so(kit: Kit, repo: Path) -> None:
+def test_marketplaces_mount_without_jq(kit: Kit, repo: Path) -> None:
     mine = kit.work / "mp/mine"
     mine.mkdir(parents=True)
     write_known(kit, {"mine": marketplace(mine)})
     run = kit.run(repo, env={"PATH": kit.path_without("jq")})
     assert run.returncode == 0, run.stderr
-    assert not run.container.has_mount(mine, ro=True)
-    assert marketplace_lines(run.stderr) == [
-        "docker/cc: jq is missing, so no folder marketplace mounted and their plugins will not load"
-    ]
+    assert run.container.has_mount(mine, ro=True)
+    assert marketplace_lines(run.stderr) == ["docker/cc: mounted marketplaces read-only: mine"]
 
 
 def test_without_either_file_nothing_mounts_and_nothing_prints(kit: Kit, repo: Path) -> None:

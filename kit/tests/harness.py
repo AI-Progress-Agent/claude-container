@@ -11,9 +11,11 @@ docker, gh and chflags commands go first on the PATH:
 - chflags keeps each flagged file as a line in a file, since Linux has no
   chflags. The launcher must call it by name, as `chflags uchg FILE`.
 
-The rest of the PATH holds only the system's folders. Every test moves HOME,
-and a tool that a version manager installs stops working without its config.
-So on the Mac the launcher runs under the bash that macOS ships, 3.2, as it
+uv comes next, in a folder of its own, so a test can leave it out. It uses
+this machine's own Python and cache, so no test downloads anything. The rest
+of the PATH holds only the system's folders. Every test moves HOME, and a
+tool that a version manager installs stops working without its config. So on
+the Mac, docker/cc.local runs under the bash that macOS ships, 3.2, as it
 does for a user without a newer one.
 """
 
@@ -204,6 +206,32 @@ if [ -n "${AGENT_BROWSER_CDP+set}" ]; then printf '%s' "$AGENT_BROWSER_CDP" >"$S
 
 
 @dataclass(frozen=True)
+class Uv:
+    """The uv that runs these tests, and the Python and cache it keeps."""
+
+    binary: str
+    cache: str
+    pythons: str
+
+    @classmethod
+    def find(cls) -> Uv:
+        # uv run sets UV to its own path. A version manager's shim in its
+        # place would stop working once a test moves HOME.
+        binary = os.environ.get("UV") or shutil.which("uv")
+        assert binary, "the tests need uv"
+
+        def ask(*args: str) -> str:
+            return subprocess.run(
+                [binary, *args], capture_output=True, text=True, check=True
+            ).stdout.strip()
+
+        return cls(binary, ask("cache", "dir"), ask("python", "dir"))
+
+
+UV = Uv.find()
+
+
+@dataclass(frozen=True)
 class Mount:
     """One -v argument: source:target, or source:target:ro."""
 
@@ -335,15 +363,18 @@ class Kit:
         self.fake = work / "fake"
         self.tmp = work / "tmp"
         self.cache = work / "cache"
-        for path in (self.src, self.fake / "bin", self.tmp, self.cache):
+        for path in (self.src, self.fake / "bin", self.fake / "uv", self.tmp, self.cache):
             path.mkdir(parents=True)
         self._write_tool("docker", f"#!{sys.executable}\n{FAKE_DOCKER}")
         self._write_tool("chflags", FAKE_CHFLAGS)
         self._write_tool("gh", FAKE_GH)
+        (self.fake / "uv" / "uv").symlink_to(UV.binary)
         (self.fake / "gh-token").write_text("gho_fake\n")
         self.env: dict[str, str] = {
             "HOME": str(self.home),
-            "PATH": f"{self.fake / 'bin'}:{SYSTEM_PATH}",
+            "PATH": f"{self.fake / 'bin'}:{self.fake / 'uv'}:{SYSTEM_PATH}",
+            "UV_CACHE_DIR": UV.cache,
+            "UV_PYTHON_INSTALL_DIR": UV.pythons,
             "TMPDIR": str(self.tmp),
             "XDG_CACHE_HOME": str(self.cache),
             "FAKE_DIR": str(self.fake),
@@ -428,22 +459,22 @@ class Kit:
         start_commands run joined with &&. agent_browser_port=False turns
         agent-browser off.
         """
+        # A JSON string or list of strings reads the same in TOML.
         lines: list[str] = []
         if project_name is not None:
-            lines.append(f"project_name={shlex.quote(project_name)}")
+            lines.append(f"project_name = {json.dumps(project_name)}")
         for name, values in (
             ("writable_siblings", writable_siblings),
+            ("start_commands", start_commands),
             ("nested_clones", nested_clones),
         ):
             if values is not None:
-                lines.append(f"{name}=({' '.join(map(shlex.quote, values))})")
-        if start_commands is not None:
-            lines.append(f"start_commands={shlex.quote(' && '.join(start_commands))}")
+                lines.append(f"{name} = {json.dumps(list(values))}")
         if agent_browser_port is not None:
-            port = "" if agent_browser_port is False else str(int(agent_browser_port))
-            lines.append(f"agent_browser_port={port}")
+            port = "false" if agent_browser_port is False else str(int(agent_browser_port))
+            lines.append(f"agent_browser_port = {port}")
         self.install(repo)
-        (repo / "docker" / "kit.sh").write_text("".join(f"{line}\n" for line in lines))
+        (repo / "docker" / "kit.toml").write_text("".join(f"{line}\n" for line in lines))
 
     def cc_local(self, repo: Path, text: str) -> None:
         self.install(repo)
@@ -480,7 +511,7 @@ class Kit:
         return self.tmp / "cc-flags"
 
     def path_without(self, *names: str) -> str:
-        """A PATH like the tests' own, without the named system commands."""
+        """A PATH like the tests' own, without the named system commands, nor uv when named."""
         tools = self.fake / "system"
         tools.mkdir(exist_ok=True)
         for folder in SYSTEM_PATH.split(":"):
@@ -488,7 +519,8 @@ class Kit:
                 link = tools / entry.name
                 if entry.name not in names and not link.exists():
                     link.symlink_to(entry)
-        return f"{self.fake / 'bin'}:{tools}"
+        uv = "" if "uv" in names else f"{self.fake / 'uv'}:"
+        return f"{self.fake / 'bin'}:{uv}{tools}"
 
     # Running.
 
