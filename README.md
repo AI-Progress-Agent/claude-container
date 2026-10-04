@@ -217,7 +217,9 @@ A plugin marketplace added from a folder on the Mac is read from that folder.
 Without it, Claude inside drops the marketplace's plugins. So the launcher
 mounts each such folder read-only, at its own path. It finds them in
 `~/.claude/plugins/known_marketplaces.json`, which lists marketplaces from
-`settings.json` and from `/plugin marketplace add` alike.
+`settings.json` and from `/plugin marketplace add` alike. That file can lag
+behind `settings.json`, such as on a new machine. So the launcher also reads
+`extraKnownMarketplaces` in `~/.claude/settings.json`, and its path wins.
 
 The launcher leaves a marketplace out in these cases:
 
@@ -236,6 +238,7 @@ At start, the launcher prints these lines:
 | `docker/cc: skipped marketplaces: <names>`                   | `skip_marketplaces` keeps these out, so their plugins do not load         |
 | `docker/cc: marketplace <name> has no folder at <path> ...`  | The Mac has no folder at that path, so the plugins do not load            |
 | `docker/cc: jq is missing, so no folder marketplace mounted` | The Mac has no `jq`, which macOS 15 and later ship. No marketplace mounts |
+| `docker/cc: docker compose config failed, ...`               | The compose files did not read, so a marketplace can mount twice          |
 
 ### Sibling repos
 
