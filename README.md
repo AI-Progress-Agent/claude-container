@@ -416,6 +416,47 @@ mount read-only:
   first makes any missing one as an empty file.
 - The `hooks`, `config` and `commondir` of each submodule's git directory,
   under `.git/modules`. `git status` in the repo runs git in each submodule.
+- The folder that `core.hooksPath` names. See below.
+
+A repo can set `core.hooksPath` to run hooks from another folder. Husky
+sets it to `.husky/_`. A `.gitignore` in `.husky/_` leaves out every file. So
+`git status` would not show a hook that the container writes there. At start, the
+launcher asks git which hooks folder each worktree uses. It asks in each
+worktree of the repo, of each writable sibling, of each nested clone and of
+each submodule. Git follows `core.hooksPath` from every config it reads, your
+global one too. When that folder sits inside a writable mount, it mounts
+read-only. The launcher first makes a missing one on the Mac, empty. It
+stays after the session. A folder outside every writable mount gets no
+mount.
+
+The launcher guards only the `core.hooksPath` that is set at start. Run the
+install that sets it, such as `pnpm install` with Husky, on the Mac before
+`docker/cc` starts. Or restart `docker/cc` after it. Husky's install inside
+cannot set `core.hooksPath`, because `.git/config` is read-only. Husky then
+writes no file and exits 0.
+
+The launcher guards only the worktrees that exist at start. A worktree that
+`git worktree add` makes inside has a writable hooks folder. So does a
+worktree whose folder is missing at start, if the container makes it again.
+Git on the Mac runs any hook written there. Before you run git on the Mac in
+such a worktree, check its hooks folder, or remove the worktree.
+
+The launcher refuses to start when it cannot mount the folder read-only.
+It refuses these folders:
+
+- the worktree's root, or a folder that holds it
+- a writable mount, or a folder that holds one
+- a folder that holds a read-only mount
+- a path through a symbolic link inside a writable mount
+- a path through a file
+
+It names each worktree and its value:
+
+```text
+docker/cc: core.hooksPath names a folder the launcher cannot mount read-only, so the container did not start:
+  /path/to/repo: core.hooksPath = .
+Point core.hooksPath at a folder below the worktree's root, with no symbolic link on the way. Or unset it.
+```
 
 Linux lets the container rename a folder that holds a read-only mount. The
 mount moves with the folder. The container could then make a new folder at
@@ -432,6 +473,7 @@ mounts on its own. It mounts writable, at its own path. These folders are:
 - each folder down to a nested clone's `.git`, such as `vendor`,
   `vendor/sdk` and `vendor/sdk/.git`
 - a writable sibling's `.git`
+- each folder above the `core.hooksPath` folder, such as `.husky`
 
 The repo's own `.git` is already a mount of its own, and so is a folder that
 a compose file mounts. Writes inside each folder still work. A rename or

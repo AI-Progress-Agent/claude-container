@@ -90,6 +90,10 @@ case $err in *"has no FROM"*) ;; *) fail "error was: $err" ;; esac
 # shellcheck source=kit/cc
 . "$root/kit/cc"
 
+# Your own git config could set core.hooksPath, which the launcher reads.
+export GIT_CONFIG_GLOBAL=$work/gitconfig GIT_CONFIG_NOSYSTEM=1
+: >"$GIT_CONFIG_GLOBAL"
+
 mkdir -p "$work/Main-Clone/docker"
 git init -q "$work/Main-Clone"
 git -C "$work/Main-Clone" -c user.name=test -c user.email=test commit -q --allow-empty -m init
@@ -296,6 +300,107 @@ collect_sibling_repos 2>/dev/null
 writable_siblings=()
 git -C "$work/Main-Clone" remote remove origin
 rm -rf "$work/Sib"
+
+# Runs collect_hooks_paths, and prints each path it mounts read-only,
+# relative to $work, sorted, on one line.
+added_hooks() {
+  local before=${#mounts[@]} arg
+  collect_hooks_paths
+  for arg in "${mounts[@]:before}"; do
+    case $arg in *:ro) arg=${arg#*:} && printf '%s\n' "${arg%:ro}" ;; esac
+  done | sed "s#^$work/##" | LC_ALL=C sort | paste -sd ' ' -
+}
+
+# The folder that core.hooksPath names mounts read-only in each worktree, as
+# git on the Mac resolves it there. A missing one is made empty first. The
+# folders above it then mount on their own, as for every read-only mount.
+mount_repo "$work/Main-Clone"
+mkdir -p "$repo/.husky/_"
+git -C "$repo" config core.hooksPath .husky/_
+want="Main-Clone/.claude/worktrees/agent/.husky/_ Main-Clone/.husky/_ Main-Clone/.worktrees/other/.husky/_"
+[ "$(added_hooks)" = "$want" ] || fail "with core.hooksPath, hooks mounts were: $(added_hooks)"
+other_hooks=$repo/.worktrees/other/.husky/_
+[ -d "$other_hooks" ] && [ -z "$(ls -A "$other_hooks")" ] || fail "the missing $other_hooks was not made empty"
+collect_hooks_paths
+case " $(added_folders) " in *" Main-Clone/.husky "*) ;; *) fail "with core.hooksPath, folder mounts were: $(added_folders)" ;; esac
+
+# A core.hooksPath that names the repo's .git/hooks needs nothing new.
+git -C "$repo" config core.hooksPath .git/hooks
+[ -z "$(added_hooks)" ] || fail "with .git/hooks, hooks mounts were: $(added_hooks)"
+
+# Nor does one outside every writable mount.
+git -C "$repo" config core.hooksPath "$work/outside-hooks"
+[ -z "$(added_hooks)" ] || fail "outside the repo, hooks mounts were: $(added_hooks)"
+[ ! -e "$work/outside-hooks" ] || fail "the launcher made a hooks folder outside the repo"
+
+# One from the global config is followed the same way, in each submodule's
+# worktree too.
+git -C "$repo" config --unset core.hooksPath
+git config --global core.hooksPath .githooks
+want="Main-Clone/.claude/worktrees/agent/.githooks Main-Clone/.githooks Main-Clone/.worktrees/other/.githooks Main-Clone/lib/.githooks"
+[ "$(added_hooks)" = "$want" ] || fail "with a global core.hooksPath, hooks mounts were: $(added_hooks)"
+git config --global --unset core.hooksPath
+
+# Git expands ~ in the value. Every worktree then names one folder, which
+# mounts once.
+# shellcheck disable=SC2088 # git expands it, not the shell
+git config --global core.hooksPath "~/Main-Clone/.tilde-hooks"
+[ "$(HOME=$work && added_hooks)" = "Main-Clone/.tilde-hooks" ] ||
+  fail "with ~ in core.hooksPath, hooks mounts were: $(HOME=$work && added_hooks)"
+git config --global --unset core.hooksPath
+
+# A bare repo that nested_clones names resolves its value in its git
+# directory.
+git init -q --bare "$repo/fixture"
+git -C "$repo/fixture" config core.hooksPath fixture-hooks
+nested_clones=(fixture)
+collect_nested_clones 2>/dev/null
+[ "$(added_hooks)" = "Main-Clone/fixture/fixture-hooks" ] ||
+  fail "in a bare repo, hooks mounts were: $(added_hooks)"
+rm -rf "$repo/fixture"
+
+# A writable sibling and a nested clone that set core.hooksPath.
+git init -q "$work/Sib"
+git -C "$work/Sib" remote add origin git@github.com:program-org/sib.git
+git -C "$work/Sib" config core.hooksPath sib-hooks
+git -C "$repo" remote add origin git@github.com:program-org/main-clone.git
+git init -q "$repo/vendor/dep"
+git -C "$repo/vendor/dep" config core.hooksPath dep-hooks
+writable_siblings=(Sib)
+mount_repo "$work/Main-Clone"
+collect_sibling_repos 2>/dev/null
+nested_clones=(vendor/dep)
+collect_nested_clones 2>/dev/null
+[ "$(added_hooks)" = "Main-Clone/vendor/dep/dep-hooks Sib/sib-hooks" ] ||
+  fail "in a writable sibling and a nested clone, hooks mounts were: $(added_hooks)"
+writable_siblings=()
+git -C "$repo" remote remove origin
+rm -rf "$work/Sib" "$repo/vendor"
+
+# Exits unless collect_hooks_paths refuses core.hooksPath = $1 in the repo.
+expect_hooks_refused() {
+  local err
+  git -C "$repo" config core.hooksPath "$1"
+  mount_repo "$work/Main-Clone"
+  err=$( (collect_hooks_paths) 2>&1) && fail "started with core.hooksPath = $1"
+  case $err in *"did not start"*"  $repo: core.hooksPath = $1"*) ;; *) fail "with $1, refusal was: $err" ;; esac
+}
+
+# The repo's root, a folder that holds it, and a link each stop the start.
+# So does a folder that sits below a link: the container could point the
+# link elsewhere.
+mkdir -p "$work/real-hooks"
+ln -s "$work/real-hooks" "$repo/hooks-link"
+ln -s "$work" "$repo/up-link"
+expect_hooks_refused .
+expect_hooks_refused ..
+expect_hooks_refused hooks-link
+expect_hooks_refused up-link/real-hooks
+git -C "$repo" config --unset core.hooksPath
+rm -f "$repo/hooks-link" "$repo/up-link"
+rm -rf "$repo/.husky" "$repo/.claude/worktrees/agent/.husky" "$repo/.worktrees/other/.husky" \
+  "$repo/.githooks" "$repo/.claude/worktrees/agent/.githooks" "$repo/.worktrees/other/.githooks" \
+  "$repo/lib/.githooks" "$repo/.tilde-hooks"
 
 # The pointer checks. guard_main sets the mounts for the main clone afresh,
 # as a start does.
