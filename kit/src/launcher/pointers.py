@@ -45,12 +45,12 @@ class PointerScope:
 
 
 def refuse_git_pointers(draft: Draft) -> None:
-    """Refuses to start when find_git_pointers finds a file.
+    """Refuses to start when _find_git_pointers finds a file.
 
     The file is already on the Mac, so the launcher names it and leaves it
     for you.
     """
-    found = find_git_pointers(PointerScope.of(draft), draft.disk)
+    found = _find_git_pointers(PointerScope.of(draft), draft.disk)
     if found:
         raise Refused(
             refusal(
@@ -62,7 +62,37 @@ def refuse_git_pointers(draft: Draft) -> None:
         )
 
 
-def find_git_pointers(scope: PointerScope, disk: Disk) -> list[str]:
+def block_git_pointers(scope: PointerScope, notify: Callable[[str], None]) -> list[str]:
+    """Moves aside each path that _find_git_pointers finds, so git on the Mac stops reading it.
+
+    The new name is <path>.cc-blocked. When that is taken, a number goes
+    after it. A folder's HEAD moves aside too, or git would take the moved
+    folder for a bare repo. Each move goes to notify as a Notification
+    event's JSON. Returns each moved path.
+    """
+    blocked: list[str] = []
+    for path in _find_git_pointers(scope, Disk()):
+        to = f"{path}.cc-blocked"
+        if exists(to):
+            to = f"{to}-{random.randrange(1 << 30)}"
+        try:
+            os.rename(path, to)
+        except OSError:
+            continue
+        if os.path.isdir(to) and not os.path.islink(to) and exists(f"{to}/HEAD"):
+            with contextlib.suppress(OSError):
+                os.rename(f"{to}/HEAD", f"{to}/HEAD.cc-blocked")
+        blocked.append(path)
+        message = (
+            f"docker/cc blocked {path}: it could lead git on the Mac to hooks or a config "
+            "written inside"
+        )
+        event = {"hook_event_name": "Notification", "cwd": scope.repo, "message": message}
+        notify(json.dumps(event) + "\n")
+    return blocked
+
+
+def _find_git_pointers(scope: PointerScope, disk: Disk) -> list[str]:
     """Each path that could lead git on the Mac to hooks or a config that the container wrote.
 
     A path is one of:
@@ -70,7 +100,7 @@ def find_git_pointers(scope: PointerScope, disk: Disk) -> list[str]:
       - a commondir in a guarded git folder that names another folder, or is
         a link
       - a .git, as a folder, a file or a link, that does not lead to a
-        guarded git folder. See leads_to_guarded.
+        guarded git folder. See _leads_to_guarded.
       - the HEAD of a folder that git takes for a git folder, with no .git:
         see has_git_dir_parts. HEAD can be a link too. A HEAD inside a
         guarded git folder, such as a bare repo that nested_clones names, is
@@ -90,7 +120,7 @@ def find_git_pointers(scope: PointerScope, disk: Disk) -> list[str]:
             found.append(commondir)
     for path in _search(scope.repo, *scope.writable_dirs):
         if os.path.basename(path).lower() == ".git":
-            if not leads_to_guarded(scope, disk, path):
+            if not _leads_to_guarded(scope, disk, path):
                 found.append(path)
             continue
         folder = os.path.dirname(path)
@@ -101,7 +131,7 @@ def find_git_pointers(scope: PointerScope, disk: Disk) -> list[str]:
     return found
 
 
-def leads_to_guarded(scope: PointerScope, disk: Disk, path: str) -> bool:
+def _leads_to_guarded(scope: PointerScope, disk: Disk, path: str) -> bool:
     """Whether the .git at path leads git to a guarded git folder.
 
     It does when it is one, or names one. It also does when it names a
@@ -130,36 +160,6 @@ def leads_to_guarded(scope: PointerScope, disk: Disk, path: str) -> bool:
     if not _has_content(config):
         return True
     return not git.worktree_config_on(common) or config in scope.read_only_files
-
-
-def block_git_pointers(scope: PointerScope, notify: Callable[[str], None]) -> list[str]:
-    """Moves aside each path that find_git_pointers finds, so git on the Mac stops reading it.
-
-    The new name is <path>.cc-blocked. When that is taken, a number goes
-    after it. A folder's HEAD moves aside too, or git would take the moved
-    folder for a bare repo. Each move goes to notify as a Notification
-    event's JSON. Returns each moved path.
-    """
-    blocked: list[str] = []
-    for path in find_git_pointers(scope, Disk()):
-        to = f"{path}.cc-blocked"
-        if exists(to):
-            to = f"{to}-{random.randrange(1 << 30)}"
-        try:
-            os.rename(path, to)
-        except OSError:
-            continue
-        if os.path.isdir(to) and not os.path.islink(to) and exists(f"{to}/HEAD"):
-            with contextlib.suppress(OSError):
-                os.rename(f"{to}/HEAD", f"{to}/HEAD.cc-blocked")
-        blocked.append(path)
-        message = (
-            f"docker/cc blocked {path}: it could lead git on the Mac to hooks or a config "
-            "written inside"
-        )
-        event = {"hook_event_name": "Notification", "cwd": scope.repo, "message": message}
-        notify(json.dumps(event) + "\n")
-    return blocked
 
 
 def _search(*roots: str) -> list[str]:

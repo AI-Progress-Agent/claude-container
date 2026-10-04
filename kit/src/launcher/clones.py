@@ -41,7 +41,7 @@ def collect_sibling_repos(draft: Draft, writable_siblings: list[str]) -> None:
     too. Each one joins writable_dirs.
     """
     main = main_clone(draft.repo)
-    own = origin_owner(main)
+    own = _origin_owner(main)
     # An origin the pattern cannot read, such as a local path, gives no owner.
     # Every sibling without a readable origin would match it.
     if not own:
@@ -49,7 +49,7 @@ def collect_sibling_repos(draft: Draft, writable_siblings: list[str]) -> None:
     found: list[str] = []
     writable: list[str] = []
     for folder in children(os.path.dirname(main)):
-        if folder == main or not os.path.isdir(f"{folder}/.git") or origin_owner(folder) != own:
+        if folder == main or not os.path.isdir(f"{folder}/.git") or _origin_owner(folder) != own:
             continue
         name = os.path.basename(folder)
         if name in writable_siblings:
@@ -64,18 +64,6 @@ def collect_sibling_repos(draft: Draft, writable_siblings: list[str]) -> None:
         draft.messages.append(f"docker/cc: mounted read-only: {' '.join(found)}")
     if writable:
         draft.messages.append(f"docker/cc: mounted writable: {' '.join(writable)}")
-
-
-def origin_owner(clone: str) -> str | None:
-    """host/owner from the clone's origin URL, in lower case, because GitHub ignores case in both.
-
-    "" when the pattern cannot read the URL, and None when there is no origin.
-    """
-    url = git.git("-C", clone, "remote", "get-url", "origin")
-    if url is None:
-        return None
-    match = _ORIGIN.match(url)
-    return f"{match[3]}/{match[5]}".lower() if match else ""
 
 
 def collect_nested_clones(draft: Draft, nested_clones: list[str]) -> None:
@@ -121,3 +109,15 @@ def has_git_dir_parts(folder: str) -> bool:
     return exists(f"{folder}/commondir") or (
         exists(f"{folder}/objects") and exists(f"{folder}/refs")
     )
+
+
+def _origin_owner(clone: str) -> str | None:
+    """host/owner from the clone's origin URL, in lower case, because GitHub ignores case in both.
+
+    "" when the pattern cannot read the URL, and None when there is no origin.
+    """
+    url = git.git("-C", clone, "remote", "get-url", "origin")
+    if url is None:
+        return None
+    match = _ORIGIN.match(url)
+    return f"{match[3]}/{match[5]}".lower() if match else ""
