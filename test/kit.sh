@@ -6,7 +6,7 @@ set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 work=$(mktemp -d "${TMPDIR:-/tmp}/cc-kit-test.XXXXXX")
-trap 'rm -rf "$work"' EXIT
+trap 'chmod -R u+w "$work"; rm -rf "$work"' EXIT
 # On macOS TMPDIR is a link, and git prints the resolved path.
 work=$(cd "$work" && pwd -P)
 
@@ -220,6 +220,27 @@ collect_worktree_mounts "$work/Main-Clone"
 file=$lib/worktrees/lib-wt/commondir
 is_one_of "$file:$file:ro" "${mounts[@]}" || fail "the submodule's worktree commondir did not mount"
 git -C "$work/Main-Clone/lib" worktree remove "$work/lib-wt"
+
+# A file or folder the launcher cannot make on the Mac, as on a read-only
+# disk, stops the start. The launcher names it and the disk. A folder with no
+# write permission fails the same way, and root ignores the permission, so
+# the check skips under root.
+if [ "$(id -u)" -ne 0 ]; then
+  git init -q "$work/Ro"
+  chmod a-w "$work/Ro/.git"
+  err=$( (collect_worktree_mounts "$work/Ro") 2>&1) && fail "started with a commondir it could not write"
+  case $err in *"did not start"*"  $work/Ro/.git/commondir"*"read-only disk"*) ;; *) fail "refusal was: $err" ;; esac
+  case $err in *"line "[0-9]*) fail "the refusal held a bash error: $err" ;; esac
+  # A missing folder, such as a clone's hooks, stops the start the same way.
+  chmod u+w "$work/Ro/.git"
+  printf '../.git\n' >"$work/Ro/.git/commondir"
+  rm -rf "$work/Ro/.git/hooks"
+  chmod a-w "$work/Ro/.git"
+  err=$( (guard_clone "$work/Ro") 2>&1) && fail "started with a hooks folder it could not make"
+  case $err in *"did not start"*"  $work/Ro/.git/hooks"*"read-only disk"*) ;; *) fail "refusal was: $err" ;; esac
+  chmod u+w "$work/Ro/.git"
+  rm -rf "$work/Ro"
+fi
 
 # Sets the mounts for the repo at $1 afresh, as a start does.
 mount_repo() {
