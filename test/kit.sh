@@ -416,7 +416,8 @@ expect_hooks_refused() {
 
 # The repo's root, a folder that holds it, and a link each stop the start.
 # So does a folder that sits below a link: the container could point the
-# link elsewhere.
+# link elsewhere. So does a .. out of a missing folder: the container could
+# make it a link.
 mkdir -p "$work/real-hooks"
 ln -s "$work/real-hooks" "$repo/hooks-link"
 ln -s "$work" "$repo/up-link"
@@ -424,6 +425,7 @@ expect_hooks_refused .
 expect_hooks_refused ..
 expect_hooks_refused hooks-link
 expect_hooks_refused up-link/real-hooks
+expect_hooks_refused missing/../.husky/_
 if [ -d "$upper" ]; then
   expect_hooks_refused "$upper/hooks-link"
 fi
