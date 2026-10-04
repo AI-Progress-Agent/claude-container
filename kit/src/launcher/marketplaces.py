@@ -101,12 +101,16 @@ def folder_marketplaces(known: str, settings: str) -> list[tuple[str, str]] | No
 
 
 def _read_json(path: str) -> object:
-    """The file's JSON, or None when the file is missing."""
+    """The file's JSON, or None when the file is missing or holds only whitespace.
+
+    jq read an empty file as nothing, as the bash launcher's check did.
+    """
     try:
         with open(path, encoding="utf-8") as file:
-            return cast(object, json.load(file))
+            text = file.read()
     except FileNotFoundError:
         return None
+    return cast(object, json.loads(text)) if text.strip() else None
 
 
 def _json_object(value: object) -> dict[str, object]:

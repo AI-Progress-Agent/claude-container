@@ -127,6 +127,20 @@ def test_unreadable_json_mounts_nothing(kit: Kit, repo: Path) -> None:
     ]
 
 
+def test_an_empty_file_reads_as_no_marketplaces(kit: Kit, repo: Path) -> None:
+    mine = kit.work / "mp/mine"
+    mine.mkdir(parents=True)
+    write_known(kit, {})
+    (kit.home / ".claude/plugins/known_marketplaces.json").write_text("")
+    (kit.home / ".claude/settings.json").write_text(
+        json.dumps({"extraKnownMarketplaces": {"mine": marketplace(mine)}})
+    )
+    run = kit.run(repo)
+    assert run.returncode == 0, run.stderr
+    assert run.container.has_mount(mine, ro=True)
+    assert marketplace_lines(run.stderr) == ["docker/cc: mounted marketplaces read-only: mine"]
+
+
 def test_settings_json_entry_wins_when_known_marketplaces_lags(kit: Kit, repo: Path) -> None:
     """A path may hold a backslash or a tab."""
     src = kit.work / "mp"
