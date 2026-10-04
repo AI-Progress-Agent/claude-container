@@ -111,6 +111,34 @@ use_repo "$work/My.App"
 load_repo_config
 [ "$project_name" = my-app-claude ] || fail "from My.App, project_name was $project_name"
 
+# REPO_GIT is the git directory whose hooks and config compose.yaml mounts
+# read-only. From the main clone, it is the clone's .git. A worktree's .git is
+# a file, so from a worktree REPO_GIT is the main clone's .git. A directory
+# inside the clone gets the same. Outside git, REPO_GIT is the repo's .git.
+mkdir -p "$work/Main-Clone/sub/docker"
+for pair in "$work/Main-Clone:$work/Main-Clone/.git" \
+  "$work/Main-Clone/.claude/worktrees/agent:$work/Main-Clone/.git" \
+  "$work/Main-Clone/sub:$work/Main-Clone/.git" \
+  "$work/My.App:$work/My.App/.git"; do
+  use_repo "${pair%%:*}"
+  export_compose_env
+  [ "$REPO_GIT" = "${pair#*:}" ] || fail "from $repo, REPO_GIT was $REPO_GIT"
+done
+
+# A worktree's .git file and its commondir file tell git where to find the
+# hooks and config. Both mount read-only, so the container cannot point git
+# on the Mac at a config of its own. The main clone has neither file.
+use_repo "$work/Main-Clone/.claude/worktrees/agent"
+mounts=()
+collect_worktree_mounts
+wt_git=$work/Main-Clone/.git/worktrees/agent
+[ "${mounts[*]}" = "-v $repo/.git:$repo/.git:ro -v $wt_git/commondir:$wt_git/commondir:ro" ] ||
+  fail "from a worktree, mounts were: ${mounts[*]:-none}"
+use_repo "$work/Main-Clone"
+mounts=()
+collect_worktree_mounts
+[ ${#mounts[@]} -eq 0 ] || fail "from the main clone, mounts were: ${mounts[*]}"
+
 # The port comes from agent-browser.json, and the browser setup names it.
 use_repo "$work/Main-Clone"
 printf '{\n  "cdp": "10099"\n}\n' >"$repo/agent-browser.json"

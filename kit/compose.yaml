@@ -49,18 +49,24 @@ services:
       - MISE_TRUSTED_CONFIG_PATHS=${REPO}
 
     volumes:
-      # The repo. The only host path Claude can write to besides this
-      # project's memory below. That includes any folder of partner material
-      # at the clone's root: .gitignore keeps it out of commits, not out of
-      # reach.
+      # The repo. The only host path Claude can write to besides its git
+      # directory and this project's memory below. That includes any folder
+      # of partner material at the clone's root: .gitignore keeps it out of
+      # commits, not out of reach.
       - ${REPO}:${REPO}
+      # The repo's git directory. In the main clone it is the repo's own
+      # .git, already mounted above. In a linked worktree it is the main
+      # clone's .git, which holds the worktree's commits, branches and index.
+      # The launcher also mounts the files that lead a worktree's git here
+      # read-only, so the container cannot point git elsewhere.
+      - ${REPO_GIT:?run docker/cc, not docker compose}:${REPO_GIT}
       # Except the two places git reads commands from. A hook or a config
       # entry such as core.fsmonitor written here would run on the Mac at
       # its next git command, and git status would not show it. Commits and
       # pushes still work. Anything that writes the config, such as setting
       # a branch's upstream, fails inside: do that on the host.
-      - ${REPO}/.git/hooks:${REPO}/.git/hooks:ro
-      - ${REPO}/.git/config:${REPO}/.git/config:ro
+      - ${REPO_GIT}/hooks:${REPO_GIT}/hooks:ro
+      - ${REPO_GIT}/config:${REPO_GIT}/config:ro
 
       # The container's own login, settings state and session history.
       - claude-config:${HOST_HOME}/.claude

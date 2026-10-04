@@ -200,6 +200,7 @@ only if you mount their targets yourself. See
 By default, the container can write to these Mac paths:
 
 - the repo
+- the main clone's `.git`, when you run `docker/cc` from a linked worktree
 - the project's memory and session transcripts, shared with the Mac
 - each sibling repo that `writable_siblings` names (see below)
 
@@ -356,7 +357,11 @@ The repo mounts writable, except `.git/hooks` and `.git/config`, which mount
 read-only. Git runs commands from both. So a write there from the container
 would run on your Mac at its next `git` command, and `git status` would not
 show it. Commits and pushes still work. A command that writes `.git/config`
-cannot write it inside.
+cannot write it inside. Run from a linked worktree, `docker/cc` also mounts
+the main clone's `.git`, writable, because the worktree's commits and
+branches live there. Its `hooks` and `config` mount read-only, in the same
+way. So do the two files that tell git where those are: the worktree's
+`.git` file and the `commondir` file in its git directory.
 
 So a branch you create inside has no upstream, the remote branch it tracks.
 Git records an upstream in `.git/config`. These commands try to record one:

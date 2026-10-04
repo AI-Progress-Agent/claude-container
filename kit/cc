@@ -93,6 +93,7 @@ main() {
   mkdir -p "$HOME/.claude/projects/$PROJECT_KEY"
 
   collect_host_mounts
+  collect_worktree_mounts
   collect_sibling_repos
   export_gh_token
   export_timezone
@@ -154,6 +155,10 @@ main_clone() {
 export_compose_env() {
   export PROJECT_NAME=$project_name
   export REPO=$repo
+  # Not GIT_COMMON_DIR: git reads that name, and would then send every git
+  # command here to this repo.
+  REPO_GIT=$(repo_git_dir)
+  export REPO_GIT
   export HOST_HOME=$HOME
   HOST_USER=$(id -un)
   export HOST_USER
@@ -162,6 +167,23 @@ export_compose_env() {
   # dash.
   PROJECT_KEY=$(printf '%s' "$repo" | sed 's/[^A-Za-z0-9]/-/g')
   export PROJECT_KEY
+}
+
+# Prints the path of the git directory that holds the repo's hooks and
+# config. In the main clone, that is the repo's own .git. The path keeps the
+# form the repo has here, so the read-only mounts land where git inside
+# looks. A linked worktree's .git is a file. That file points into the main
+# clone's .git, so this prints the main clone's .git. Git prints it by its
+# real path, as the worktree's .git file names it. Outside git, this prints
+# the repo's .git.
+repo_git_dir() {
+  local dir
+  if [ ! -d "$repo/.git" ] &&
+    dir=$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir 2>/dev/null); then
+    printf '%s\n' "$dir"
+  else
+    printf '%s\n' "$repo/.git"
+  fi
 }
 
 # Sets compose, the docker compose command with the kit's compose file and
@@ -265,6 +287,22 @@ collect_host_mounts() {
       mounts+=(-v "$src:$src:ro")
     fi
   done
+}
+
+# Adds to mounts, from a linked worktree, the two files that lead git to the
+# hooks and config. The worktree's .git file names its git directory, and
+# that directory's commondir file names the main clone's .git. Both are
+# writable otherwise. The container could then point git on the Mac at a
+# config of its own, and so get past the read-only mounts in compose.yaml.
+# The main clone has neither file, and a submodule has no commondir.
+collect_worktree_mounts() {
+  [ -f "$repo/.git" ] || return 0
+  local git_dir
+  git_dir=$(git -C "$repo" rev-parse --path-format=absolute --git-dir 2>/dev/null) || return 0
+  mounts+=(-v "$repo/.git:$repo/.git:ro")
+  if [ -f "$git_dir/commondir" ]; then
+    mounts+=(-v "$git_dir/commondir:$git_dir/commondir:ro")
+  fi
 }
 
 # Adds to mounts the program's other repos: each directory next to this
