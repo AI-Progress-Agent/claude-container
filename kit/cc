@@ -336,7 +336,7 @@ collect_host_mounts() {
 collect_worktree_mounts() {
   local dir=$1 real common line file
   common=$(git_common_dir "$dir") || return 0
-  real=$(cd "$dir" && pwd -P)
+  real=$(real_dir "$dir")
   while IFS= read -r line; do
     file=${line#worktree }/.git
     if [ "$line" != "${line#worktree }" ] && [ -f "$file" ]; then
@@ -476,8 +476,8 @@ real_dir() {
 
 # Adds to mounts the file $1, read-only, at the real path git names it by.
 # When $1 sits under $2, the real path of $3, it also mounts at the same place
-# under $3. That is the path the container writes it by when $3 reaches the
-# clone through a symbolic link.
+# under $3. That is the path the container writes it by. $3 differs from $2
+# when it reaches the clone through a symbolic link, or in other letter case.
 add_git_file_mount() {
   mounts+=(-v "$1:$1:ro")
   if [ "$3" != "$2" ] && is_under_any "$1" "$2"; then
