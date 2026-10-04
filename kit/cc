@@ -124,7 +124,8 @@ main() {
 #                       the Mac.
 #   nested_clones       the clones and bare repos inside the repo kept on
 #                       purpose, by their paths in the repo. None, by default.
-#                       docker/cc.local can add more. See
+#                       A clone inside a writable sibling goes by its
+#                       absolute path. docker/cc.local can add more. See
 #                       collect_nested_clones.
 #
 # kit.sh is sourced inside this function, so it sets each one by plain
@@ -581,18 +582,24 @@ load_local_overrides() {
   fi
 }
 
-# Mounts each clone that nested_clones names by its path in the repo, as
-# collect_sibling_repos mounts a writable sibling: its .git/hooks, its
-# .git/config and the files that lead git to them, read-only. A bare repo
-# named there, such as a test fixture, gets its own hooks and config mounted
-# read-only in the same way. Any other clone or bare repo inside the repo is
-# one the container could write, and refuse_git_pointers would refuse to
-# start. A named path that holds neither is not guarded, so a clone made
-# there during the session is moved aside.
+# Guards each clone that nested_clones names, as collect_sibling_repos
+# guards a writable sibling. Its .git/hooks, its .git/config and the files
+# that lead git to them mount read-only. A bare repo named there, such as a
+# test fixture, gets its own hooks and config mounted read-only too.
+#
+# A path in nested_clones is relative to the repo. An absolute path names a
+# clone inside a writable sibling.
+#
+# The container could write any other clone or bare repo inside the repo, so
+# refuse_git_pointers refuses to start. A named path that holds neither is
+# not guarded. So a clone made there during the session is moved aside.
 collect_nested_clones() {
   local path dir guarded=()
   for path in ${nested_clones[@]+"${nested_clones[@]}"}; do
-    dir=$repo/${path%/}
+    case $path in
+      /*) dir=${path%/} ;;
+      *) dir=$repo/${path%/} ;;
+    esac
     if [ -d "$dir/.git" ]; then
       guard_clone "$dir"
     elif [ -f "$dir/HEAD" ] && has_git_dir_parts "$dir"; then
@@ -619,7 +626,7 @@ refuse_git_pointers() {
   {
     echo "docker/cc: these could lead git on the Mac to hooks or a config written inside, so the container did not start:"
     printf '  %s\n' "${found[@]}"
-    echo "Delete each one. To keep a clone or a bare repo inside the repo, add its path to nested_clones in docker/kit.sh or docker/cc.local."
+    echo "Delete each one. To keep a clone or a bare repo inside the repo or a writable sibling, add its path to nested_clones in docker/kit.sh or docker/cc.local."
   } >&2
   exit 1
 }

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Checks collect_sibling_repos in the launcher, kit/cc, without Docker. It builds a
-# parent directory of clones and plain folders, then checks that only the
-# clones with this repo's origin owner are mounted, each read-only unless
-# writable_siblings names it.
+# Checks collect_sibling_repos in the launcher, kit/cc, without Docker. It
+# builds a parent directory of clones and plain folders, then checks that
+# only the clones with this repo's origin owner are mounted, each read-only
+# unless writable_siblings names it. It also checks that find_git_pointers
+# searches each writable sibling.
 set -euo pipefail
 
 # Source the launcher for the real code. It sets repo for itself, so the test
@@ -85,6 +86,12 @@ collect_sibling_repos 2>/dev/null
 git init -q "$work/rw-sibling/nested"
 [ "$(find_git_pointers)" = "$work/rw-sibling/nested/.git" ] ||
   fail "with a clone in a writable sibling, found: $(find_git_pointers)"
+# nested_clones names a clone in a writable sibling by its absolute path.
+nested_clones=("$work/rw-sibling/nested")
+collect_nested_clones 2>/dev/null
+[ -z "$(find_git_pointers)" ] ||
+  fail "with nested_clones naming the clone in a writable sibling, found: $(find_git_pointers)"
+nested_clones=()
 rm -rf "$work/rw-sibling/nested"
 
 # A clone whose origin names no owner, such as a local path, mounts nothing:

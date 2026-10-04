@@ -437,7 +437,8 @@ To keep a clone inside the repo, add its path to `nested_clones` in
 `docker/kit.sh` or [`docker/cc.local`](#dockercclocal). Its `.git/hooks`,
 `.git/config` and the files above then mount read-only, as a writable
 sibling's do. You can add a bare repo, such as a test fixture, in the same
-way. Its own `hooks` and `config` then mount read-only.
+way. Its own `hooks` and `config` then mount read-only. For a clone inside a
+writable sibling, add its absolute path.
 
 During the session, the launcher searches again about every 5 seconds. It
 moves each one it finds aside, to its name plus `.cc-blocked`, and tells
