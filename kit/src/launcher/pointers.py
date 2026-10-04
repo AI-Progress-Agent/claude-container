@@ -20,6 +20,7 @@ from launcher.draft import Disk, Draft, Refused
 from launcher.gitdirs import commondir_names_itself, named_dir, names_dir
 from launcher.output import refusal
 from launcher.paths import exists, is_under_any, real_dir
+from launcher.reach import Reach
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,8 @@ class PointerScope:
     guarded_git_dirs: tuple[str, ...]
     # The files that mount read-only at their own paths.
     read_only_files: frozenset[str]
+    # The writable mounts and the read-only mounts, for the hooks folders.
+    reach: Reach
 
     @classmethod
     def of(cls, draft: Draft) -> PointerScope:
@@ -41,6 +44,7 @@ class PointerScope:
             read_only_files=frozenset(
                 m.source for m in draft.mounts if m.read_only and m.source == m.target
             ),
+            reach=Reach.of(draft),
         )
 
 
@@ -72,24 +76,40 @@ def block_git_pointers(scope: PointerScope, notify: Callable[[str], None]) -> li
     """
     blocked: list[str] = []
     for path in _find_git_pointers(scope, Disk()):
-        to = f"{path}.cc-blocked"
-        if exists(to):
-            to = f"{to}-{random.randrange(1 << 30)}"
-        try:
-            os.rename(path, to)
-        except OSError:
+        to = move_aside(path)
+        if to is None:
             continue
         if os.path.isdir(to) and not os.path.islink(to) and exists(f"{to}/HEAD"):
             with contextlib.suppress(OSError):
                 os.rename(f"{to}/HEAD", f"{to}/HEAD.cc-blocked")
         blocked.append(path)
-        message = (
-            f"docker/cc blocked {path}: it could lead git on the Mac to hooks or a config "
-            "written inside"
-        )
-        event = {"hook_event_name": "Notification", "cwd": scope.repo, "message": message}
-        notify(json.dumps(event) + "\n")
+        notify(blocked_event(scope.repo, path))
     return blocked
+
+
+def move_aside(path: str) -> str | None:
+    """Renames path to <path>.cc-blocked, or with a number after that when it is taken.
+
+    Returns the new name, or None when the rename fails.
+    """
+    to = f"{path}.cc-blocked"
+    if exists(to):
+        to = f"{to}-{random.randrange(1 << 30)}"
+    try:
+        os.rename(path, to)
+    except OSError:
+        return None
+    return to
+
+
+def blocked_event(repo: str, path: str) -> str:
+    """The Notification event's JSON that tells notify_host the watcher moved path aside."""
+    message = (
+        f"docker/cc blocked {path}: it could lead git on the Mac to hooks or a config "
+        "written inside"
+    )
+    event = {"hook_event_name": "Notification", "cwd": repo, "message": message}
+    return json.dumps(event) + "\n"
 
 
 def _find_git_pointers(scope: PointerScope, disk: Disk) -> list[str]:

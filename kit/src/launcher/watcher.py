@@ -11,8 +11,9 @@ on each pass, about every half second. When the process has ended, the
 watcher ends the session.
 
 Every tenth pass, about every 5 seconds, it also moves aside each file that
-could lead git on the Mac to hooks or a config written inside. A full search
-of the repo takes too long to run on every pass.
+could lead git on the Mac to hooks or a config written inside, and each
+hooks folder that has no read-only mount. A full search of the repo takes
+too long to run on every pass.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ from types import FrameType
 from typing import cast
 
 from launcher.flags import FlagSet, is_alive
+from launcher.hooks import block_hooks_folders
 from launcher.local import LocalHelper
 from launcher.output import say
 from launcher.paths import is_under
@@ -145,6 +147,7 @@ class Watcher:
 
     def _block(self) -> None:
         self.blocked += block_git_pointers(self.scope, self._notify_text)
+        self.blocked += block_hooks_folders(self.scope, self._notify_text)
 
     def _notify_text(self, text: str) -> None:
         """Hands the event text to notify_host, run at the repo's root."""

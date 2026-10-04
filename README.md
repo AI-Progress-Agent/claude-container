@@ -492,16 +492,25 @@ install that sets it, such as `pnpm install` with Husky, on the Mac before
 cannot set `core.hooksPath`, because `.git/config` is read-only. Husky then
 writes no file and exits 0.
 
-The launcher reads `core.hooksPath` for the branch checked out at start. An
-`[includeIf "onbranch:..."]` section can set it for some branches only. The
-container can switch branch, so git on the Mac may then read another value.
-Do not set `core.hooksPath` in such a section.
+At start, the launcher mounts the hooks folders of the worktrees that exist
+then, for the branch checked out then. During the session, it reads
+`core.hooksPath` again in each worktree, about every 5 seconds. These
+worktrees can then have a hooks folder with no read-only mount:
 
-The launcher guards only the worktrees that exist at start. A worktree that
-`git worktree add` makes inside has a writable hooks folder. So does a
-worktree whose folder is missing at start, if the container makes it again.
-Git on the Mac runs any hook written there. Before you run git on the Mac in
-such a worktree, check its hooks folder, or remove the worktree.
+- a worktree that `git worktree add` makes inside
+- a worktree whose folder is missing at start, if the container makes it
+  again
+- a worktree where the container switches to a branch that an
+  `[includeIf "onbranch:..."]` section sets `core.hooksPath` for
+
+When such a folder sits inside a writable mount, the launcher moves it aside,
+to its name plus `.cc-blocked`, as it moves a `.git`. See below. The
+worktree keeps working, and git on the Mac finds no hooks to run there. In a
+repo that commits its hooks folder, the hooks then show as deleted in that
+worktree. Git on the Mac can still run a hook in the seconds before the
+launcher moves its folder. The launcher does not move a folder that it would
+refuse at start, such as the worktree's root. Do not point `core.hooksPath`
+at such a folder in an `onbranch` section.
 
 The launcher refuses to start when it cannot mount the folder read-only.
 It refuses these folders:

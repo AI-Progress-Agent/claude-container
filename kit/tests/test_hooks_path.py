@@ -6,8 +6,15 @@ the Mac. Only a folder inside a writable mount needs the mount.
 
 from __future__ import annotations
 
+import shutil
+
 import pytest
 from harness import MAIN_GUARDED, Kit, folder_mounts, hooks_mounts, ignores_case, read_only
+
+MOVED = (
+    "docker/cc: moved aside to .cc-blocked, since each could lead git on the Mac "
+    "to hooks or a config written inside:"
+)
 
 
 def test_hooks_folder_mounts_in_each_worktree(kit: Kit) -> None:
@@ -27,6 +34,8 @@ def test_hooks_folder_mounts_in_each_worktree(kit: Kit) -> None:
     assert list(other.iterdir()) == []
     # The folders above it mount on their own, as for every read-only mount.
     assert "Main-Clone/.husky" in folder_mounts(run.container, kit)
+    # A folder guarded at start stays where it is.
+    assert MOVED not in run.stderr
 
 
 def test_git_hooks_folder_needs_nothing_new(kit: Kit) -> None:
@@ -162,3 +171,56 @@ def test_folder_it_cannot_guard_stops_the_start(kit: Kit, value: str) -> None:
     assert "did not start" in run.stderr
     assert f"\n  {repo}: core.hooksPath = {value}\n" in run.stderr
     assert not run.started
+
+
+# During the session, the watcher moves aside each hooks folder inside a
+# writable mount that was not guarded at start.
+
+
+def test_hooks_folder_of_a_worktree_made_inside_moves_aside(kit: Kit) -> None:
+    repo = kit.main_clone()
+    (repo / ".husky/_").mkdir(parents=True)
+    kit.git("-C", repo, "config", "core.hooksPath", ".husky/_")
+    new = repo / ".claude/worktrees/new"
+    kit.on_run(f"""
+git -C {repo} worktree add -q {new}
+mkdir -p {new}/.husky/_
+printf '#!/bin/sh\\necho ran >&2\\n' >{new}/.husky/_/pre-commit
+""")
+    run = kit.run(repo)
+    assert run.returncode == 0, run.stderr
+    lines = run.lines()
+    assert MOVED in lines
+    assert lines[lines.index(MOVED) + 1 :] == [f"  {new / '.husky/_'}"]
+    assert (new / ".husky/_.cc-blocked/pre-commit").is_file()
+    assert not (new / ".husky/_").exists()
+    # The worktree itself keeps working.
+    assert (new / ".git").is_file()
+
+
+def test_hooks_folder_of_a_worktree_missing_at_start_moves_aside(kit: Kit) -> None:
+    repo = kit.main_clone()
+    kit.git("-C", repo, "config", "core.hooksPath", ".githooks")
+    other = repo / ".worktrees/other"
+    shutil.rmtree(other)
+    kit.on_run(f"""
+mkdir -p {other}/.githooks
+printf 'gitdir: %s\\n' {repo}/.git/worktrees/other >{other}/.git
+""")
+    run = kit.run(repo)
+    assert run.returncode == 0, run.stderr
+    assert f"  {other / '.githooks'}" in run.lines()
+    assert (other / ".githooks.cc-blocked").is_dir()
+    assert (other / ".git").is_file()
+
+
+def test_hooks_folder_a_branch_switch_turns_on_moves_aside(kit: Kit) -> None:
+    repo = kit.main_clone()
+    config = kit.work / "x.cfg"
+    config.write_text("[core]\n\thooksPath = .x-hooks\n")
+    kit.git("-C", repo, "config", "includeIf.onbranch:x.path", config)
+    kit.on_run(f"git -C {repo} switch -q -c x\nmkdir {repo}/.x-hooks\n")
+    run = kit.run(repo)
+    assert run.returncode == 0, run.stderr
+    assert f"  {repo / '.x-hooks'}" in run.lines()
+    assert (repo / ".x-hooks.cc-blocked").is_dir()
