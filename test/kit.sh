@@ -15,6 +15,14 @@ fail() {
   exit 1
 }
 
+# Prints the -v arguments that mount each source=target pair read-only.
+ro() {
+  local file
+  for file in "$@"; do
+    printf -- '-v %s:%s:ro ' "${file%%=*}" "${file#*=}"
+  done
+}
+
 # The stub.
 
 mkdir -p "$work/bin" "$work/image-kit" "$work/dev/kit" "$work/repo/docker"
@@ -135,12 +143,6 @@ done
 # main clone's .git gets a commondir that names itself, read-only, so the
 # container cannot write one that names another.
 git -C "$work/Main-Clone" worktree add -q "$work/Main-Clone/.worktrees/other"
-ro() {
-  local file
-  for file in "$@"; do
-    printf -- '-v %s:%s:ro ' "${file%%=*}" "${file#*=}"
-  done
-}
 agent=$work/Main-Clone/.claude/worktrees/agent/.git
 other=$work/Main-Clone/.worktrees/other/.git
 agent_dir=$work/Main-Clone/.git/worktrees/agent/commondir

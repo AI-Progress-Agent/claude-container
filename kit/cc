@@ -330,12 +330,11 @@ collect_host_mounts() {
 # submodule, so a config written there runs on the Mac at git status. Each
 # one's hooks and config mount read-only too.
 #
-# Each worktree's .git file mounts even where the worktree does not. Git
-# inside would otherwise take a worktree it cannot see for a deleted one, and
-# git worktree prune, or git gc, would remove its git directory from the
-# Mac's .git.
+# Each worktree's .git file mounts even where the worktree does not. Without
+# it, git inside takes a worktree it cannot see for a deleted one. Then git
+# worktree prune, or git gc, removes its git directory from the Mac's .git.
 collect_worktree_mounts() {
-  local dir=$1 real common line file
+  local dir=$1 real common line file module
   common=$(git_common_dir "$dir") || return 0
   real=$(real_dir "$dir")
   while IFS= read -r line; do
@@ -345,8 +344,8 @@ collect_worktree_mounts() {
     fi
   done < <(git -C "$dir" worktree list --porcelain)
   guard_git_dir "$common" "$real" "$dir"
-  while IFS= read -r file; do
-    guard_whole_git_dir "$file" "$real" "$dir"
+  while IFS= read -r module; do
+    guard_whole_git_dir "$module" "$real" "$dir"
   done < <(submodule_git_dirs "$common")
 }
 
@@ -372,7 +371,7 @@ collect_worktree_mounts() {
 # read-only too. A missing one is made empty on the Mac first. Otherwise the
 # container could make it in the writable mount.
 guard_git_dir() {
-  local git_dir=$1 file
+  local git_dir=$1 file dir
   guarded_git_dirs+=("$(real_dir "$git_dir")")
   for file in "$git_dir"/worktrees/*/commondir; do
     if [ -f "$file" ]; then
@@ -380,17 +379,17 @@ guard_git_dir() {
     fi
   done
   file=$git_dir/commondir
-  if [ ! -e "$file" ] && [ ! -L "$file" ]; then
+  if ! path_exists "$file"; then
     printf '../%s\n' "$(basename "$git_dir")" >"$file"
   fi
   if commondir_names_itself "$git_dir"; then
     add_git_file_mount "$file" "$2" "$3"
   fi
   if worktree_config_on "$git_dir"; then
-    for file in "$git_dir" "$git_dir"/worktrees/*; do
-      if [ -d "$file" ]; then
-        touch "$file/config.worktree"
-        add_git_file_mount "$file/config.worktree" "$2" "$3"
+    for dir in "$git_dir" "$git_dir"/worktrees/*; do
+      if [ -d "$dir" ]; then
+        touch "$dir/config.worktree"
+        add_git_file_mount "$dir/config.worktree" "$2" "$3"
       fi
     done
   fi
@@ -475,6 +474,12 @@ real_dir() {
   (cd "$1" 2>/dev/null && /bin/pwd -P)
 }
 
+# Succeeds when something is at the path $1: a file, a directory or a link,
+# even a link to nothing.
+path_exists() {
+  [ -e "$1" ] || [ -L "$1" ]
+}
+
 # Adds to mounts the file $1, read-only, at the real path git names it by.
 # When $1 sits under $2, the real path of $3, it also mounts at the same place
 # under $3. That is the path the container writes it by. $3 differs from $2
@@ -484,6 +489,18 @@ add_git_file_mount() {
   if [ "$3" != "$2" ] && is_under_any "$1" "$2"; then
     mounts+=(-v "$1:$3/${1#"$2"/}:ro")
   fi
+}
+
+# Succeeds when the path $1 is one of the other arguments, or under one.
+is_under_any() {
+  local path=$1 dir
+  shift
+  for dir in "$@"; do
+    if [ "$path" = "$dir" ] || [ "${path#"$dir"/}" != "$path" ]; then
+      return 0
+    fi
+  done
+  return 1
 }
 
 # Adds to mounts the program's other repos: each directory next to this
@@ -646,15 +663,14 @@ refuse_git_pointers() {
 #
 # The Mac's disk ignores case by default, so git takes .GIT for .git, and
 # head for HEAD. The search ignores case too. It does not go into a .git, so
-# the git directories themselves, guarded or not, are not searched. It does go
-# into a .git that block_git_pointers moved aside, since git can still open a
-# git directory in it, such as a submodule's. A later search finds each one.
+# it skips the git directories themselves, guarded or not. It does go into a
+# .git that block_git_pointers moved aside. Git can still open a git
+# directory in it, such as a submodule's, so a later search finds each one.
 # The container can choose any name, so no name is skipped.
 find_git_pointers() {
   local dir path
   for dir in ${guarded_git_dirs[@]+"${guarded_git_dirs[@]}"}; do
-    if { [ -e "$dir/commondir" ] || [ -L "$dir/commondir" ]; } &&
-      ! commondir_names_itself "$dir"; then
+    if path_exists "$dir/commondir" && ! commondir_names_itself "$dir"; then
       printf '%s\n' "$dir/commondir"
     fi
   done
@@ -677,12 +693,12 @@ find_git_pointers() {
 
 # Succeeds when the directory $1, if it holds a HEAD, is one that git takes
 # for a git directory. It does when $1 holds a commondir, or both objects and
-# refs. Git looks for objects and refs in the directory a commondir names
-# instead, and accepts them as files too, so neither is checked further.
+# refs. With a commondir, git looks for objects and refs in the directory it
+# names instead. Git also accepts objects and refs as files. So this checks
+# only that each one exists.
 has_git_dir_parts() {
-  [ -e "$1/commondir" ] || [ -L "$1/commondir" ] ||
-    { { [ -e "$1/objects" ] || [ -L "$1/objects" ]; } &&
-      { [ -e "$1/refs" ] || [ -L "$1/refs" ]; }; }
+  path_exists "$1/commondir" ||
+    { path_exists "$1/objects" && path_exists "$1/refs"; }
 }
 
 # Succeeds when the .git at $1 leads git to a guarded git directory. It does
@@ -806,18 +822,6 @@ compose_bind_targets() {
   jq -r '.services.claude.volumes[]? | select(.type == "bind") | .target' <<<"$config"
 }
 
-# Succeeds when the path $1 is one of the other arguments, or under one.
-is_under_any() {
-  local path=$1 dir
-  shift
-  for dir in "$@"; do
-    if [ "$path" = "$dir" ] || [ "${path#"$dir"/}" != "$path" ]; then
-      return 0
-    fi
-  done
-  return 1
-}
-
 # The image's managed settings hook Stop and Notification to drop each event
 # as a file into /run/cc-notify. That is this session's own directory, and a
 # loop on the host hands each file to notify_host. A file drop needs no port,
@@ -928,19 +932,19 @@ finish_watch() {
 }
 
 # Moves aside each path that find_git_pointers prints, so git on the Mac
-# stops reading it: <path>.cc-blocked, or a name with a number after it when
-# that is taken. A directory's HEAD moves aside too, or git would take the
-# moved directory for a bare repo. Each move goes to notify_host as a
-# Notification event, and its path is added to blocked.
+# stops reading it. The new name is <path>.cc-blocked. When that is taken, a
+# number goes after it. A directory's HEAD moves aside too, or git would take
+# the moved directory for a bare repo. Each move goes to notify_host as a
+# Notification event. Each moved path goes into blocked.
 block_git_pointers() {
   local path to
   while IFS= read -r path; do
     to=$path.cc-blocked
-    if [ -e "$to" ] || [ -L "$to" ]; then
+    if path_exists "$to"; then
       to=$to-$RANDOM$RANDOM
     fi
     mv "$path" "$to" 2>/dev/null || continue
-    if [ -d "$to" ] && [ ! -L "$to" ] && { [ -e "$to/HEAD" ] || [ -L "$to/HEAD" ]; }; then
+    if [ -d "$to" ] && [ ! -L "$to" ] && path_exists "$to/HEAD"; then
       mv "$to/HEAD" "$to/HEAD.cc-blocked" 2>/dev/null || true
     fi
     blocked+=("$path")
