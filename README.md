@@ -441,8 +441,11 @@ These commands fail on the Mac with "Operation not permitted":
 - `git remote add`
 - `git worktree remove`
 
-Run them after the session ends. `git status`, `git commit` and `git fetch`
-on the Mac still work.
+Run them after the session ends. `git status` and `git commit` on the Mac
+still work. `git worktree remove` deletes the worktree's files before it
+fails on its flagged `.git` file. Without `--force`, it refuses a worktree
+with uncommitted changes, so nothing is lost: `git restore .` in the
+worktree brings the files back.
 
 When the session ends, the launcher clears each flag it set. Two sessions can
 share a file, such as two worktrees of one clone, or two repos with one
@@ -452,14 +455,15 @@ ends. A crash that ends the launcher's watcher too, such as the Mac losing
 power, leaves its flags set. The next session that guards the same file
 clears it at its end. Or clear one yourself with `chflags nouchg <file>`.
 
-`chflags` fails on a disk that is not the Mac's own, such as an exFAT drive
-or a network share, and on a file another user owns. Then the launcher
+`chflags` fails on a read-only disk, and on a file another user owns. An
+exFAT or FAT32 drive takes the flag. When `chflags` fails, the launcher
 clears the flags it set, names each file, and does not start:
 
 ```text
 docker/cc: these could not be flagged read-only on the Mac, so the container did not start:
   /path/to/repo/.git/config
-chflags fails on a file another user owns, and on a disk that is not the Mac's own, such as exFAT or a network share.
+chflags fails on a read-only disk, and on a file another user owns.
+Move the repo to a writable disk, or give each file to your user with chown.
 ```
 
 A repo can set `core.hooksPath` to run hooks from another folder. Husky
