@@ -635,43 +635,49 @@ collect_nested_clones() {
 
 # Adds to mounts, writable at its own path, each folder above a read-only
 # mount that sits inside a writable mount. Linux lets the container rename a
-# folder that holds a mount, and the mount moves with it. The container could
-# then make a new folder at the old path, with a config or hooks of its own,
-# and git on the Mac would read them. Linux refuses to rename a mount point,
-# so each folder from the writable mount's root down to the read-only mount
-# gets a mount of its own. Writes inside each one still work.
+# folder that holds a mount. The mount moves with the folder. The container
+# could then make a new folder at the old path, with its own config or hooks.
+# Git on the Mac would read them. Linux refuses to rename a mount point. So
+# each folder from the writable mount's root down to the read-only mount gets
+# a mount of its own. Writes inside each one still work.
 #
 # The writable mounts are the repo, each writable sibling, and the repo's git
-# directory when it mounts writable. The read-only mounts are those in mounts
-# and those in compose.yaml. A folder that is already a mount point needs no
-# new one. A read-only mount at the repo's path as typed, in other letter
-# case or through a link, gets its folders at that path too, because the
-# writable mount is there.
+# directory when it mounts writable. The read-only mounts are those in mounts.
+# Those that compose.yaml adds sit directly in the repo's git directory, a
+# mount point, so they need no folder mounts. A folder that is already a mount
+# point needs no new one. That includes a folder that a compose file mounts:
+# a second mount there would hide it. The launcher can mount a read-only file
+# a second time, at the repo's path as typed. Then that copy's folders mount
+# at that path too, because the writable repo mounts there.
 collect_folder_mounts() {
-  local writable=("$repo") taken=("$repo" "$REPO_GIT") read_only=("$REPO_GIT/hooks" "$REPO_GIT/config")
+  local writable=("$repo") mount_points=("$repo" "$REPO_GIT") read_only=() folders=()
   local arg target root dir
   if [ "$REPO_GIT_MODE" = rw ]; then
     writable+=("$REPO_GIT")
-  else
-    read_only+=("$REPO_GIT")
   fi
   writable+=(${writable_dirs[@]+"${writable_dirs[@]}"})
   for arg in ${mounts[@]+"${mounts[@]}"}; do
     [ "$arg" != -v ] || continue
     target=$(mount_target "$arg")
-    taken+=("$target")
+    mount_points+=("$target")
     case $arg in *:ro) read_only+=("$target") ;; esac
   done
-  for target in "${read_only[@]}"; do
+  for target in ${read_only[@]+"${read_only[@]}"}; do
     root=$(innermost_mount "$target" "${writable[@]}") || continue
     dir=${target%/*}
     while [ "$dir" != "$root" ]; do
-      if ! is_one_of "$dir" "${taken[@]}"; then
-        mounts+=(-v "$dir:$dir")
-        taken+=("$dir")
-      fi
+      folders+=("$dir")
       dir=${dir%/*}
     done
+  done
+  [ ${#folders[@]} -gt 0 ] || return 0
+  while IFS= read -r target; do
+    mount_points+=("$target")
+  done < <(compose_bind_targets "a folder mount may hide a mount from a compose file")
+  for dir in "${folders[@]}"; do
+    is_one_of "$dir" "${mount_points[@]}" && continue
+    mounts+=(-v "$dir:$dir")
+    mount_points+=("$dir")
   done
 }
 
@@ -821,7 +827,7 @@ collect_marketplaces() {
       compose_read=1
       while IFS= read -r arg; do
         visible+=("$arg")
-      done < <(compose_bind_targets)
+      done < <(compose_bind_targets "a marketplace that a compose file mounts may mount twice")
     fi
     is_under_any "$path" "${visible[@]}" && continue
     mounts+=(-v "$path:$path:ro")
@@ -868,11 +874,12 @@ mount_target() {
 
 # Prints the path inside of each bind mount the compose files give the
 # claude service. A named volume, such as the login's, holds none of the
-# Mac's files, so it does not count.
+# Mac's files, so it does not count. When docker compose config fails, a
+# line names the result $1.
 compose_bind_targets() {
   local config
   if ! config=$("${compose[@]}" config --format json 2>/dev/null); then
-    echo "docker/cc: docker compose config failed, so a marketplace that a compose file mounts may mount twice" >&2
+    echo "docker/cc: docker compose config failed, so $1" >&2
     return 0
   fi
   jq -r '.services.claude.volumes[]? | select(.type == "bind") | .target' <<<"$config"

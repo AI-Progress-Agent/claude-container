@@ -433,10 +433,11 @@ mounts on its own. It mounts writable, at its own path. These folders are:
   `vendor/sdk` and `vendor/sdk/.git`
 - a writable sibling's `.git`
 
-The repo's own `.git` is already a mount of its own. Writes inside each
-folder still work. A rename or removal of one of these folders fails inside
-with "Resource busy", in any letter case. So do `git worktree move` and
-`git worktree remove`. Do them on the Mac after the session.
+The repo's own `.git` is already a mount of its own, and so is a folder that
+a compose file mounts. Writes inside each folder still work. A rename or
+removal of one of these folders fails inside with "Resource busy", in any
+letter case. So do `git worktree move` and `git worktree remove`. Do them on
+the Mac after the session.
 
 A read-only mount needs a file that exists at start. So these stay writable:
 
