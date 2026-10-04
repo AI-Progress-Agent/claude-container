@@ -20,6 +20,7 @@ import os
 import subprocess
 
 from launcher.draft import Draft
+from launcher.output import say
 from launcher.paths import is_under_any, real_dir
 
 
@@ -69,29 +70,36 @@ class FlagSet:
         """
         if not self.files:
             return []
-        os.makedirs(self.flags_dir, exist_ok=True)
-        with open(self.record, "w") as record:
-            record.write("".join(f"{file}\n" for file in self.files))
+        try:
+            os.makedirs(self.flags_dir, exist_ok=True)
+            with open(self.record, "w") as record:
+                record.write("".join(f"{file}\n" for file in self.files))
+        except OSError:
+            # No file is flagged yet, so clear() must touch none.
+            self.files = []
+            raise
         failed = [file for file in self.files if not _chflags("uchg", file)]
         self.files = [file for file in self.files if file not in failed]
         return failed
 
-    def clear(self) -> list[str]:
+    def clear(self) -> None:
         """Clears the flag on each file that no other live launcher's record names.
 
         Then removes this launcher's record. A launcher that starts meanwhile
         may have read the flag as set, and so set nothing. It wrote its
         record first, so a second look finds it, and each file it names is
-        flagged again. Returns each file whose flag stays set.
+        flagged again. Names each file whose flag stays set. A second call
+        does nothing.
         """
-        with contextlib.suppress(FileNotFoundError):
+        with contextlib.suppress(OSError):
             os.unlink(self.record)
-        if not self.files:
-            return []
+        files, self.files = self.files, []
+        if not files:
+            return
         held = self._held_files()
         cleared: list[str] = []
         stuck: list[str] = []
-        for file in self.files:
+        for file in files:
             if file in held:
                 continue
             (cleared if _chflags("nouchg", file) else stuck).append(file)
@@ -99,7 +107,12 @@ class FlagSet:
         for file in cleared:
             if file in held:
                 _chflags("uchg", file)
-        return stuck
+        if stuck:
+            say(
+                "docker/cc: these stay flagged read-only on the Mac. "
+                "Clear each one with chflags nouchg:",
+                *(f"  {file}" for file in stuck),
+            )
 
     def _held_files(self) -> set[str]:
         """Each file that another live launcher's record names.

@@ -175,6 +175,35 @@ def test_a_file_that_cannot_be_flagged_stops_the_start(kit: Kit) -> None:
     assert not run.started
 
 
+def test_a_refusal_names_a_flag_it_cannot_clear(kit: Kit) -> None:
+    repo = kit.main_clone()
+    commondir = repo / ".git/commondir"
+    config = repo / ".git/config"
+    kit.refuse_chflags("uchg", commondir)
+    kit.refuse_chflags("nouchg", config)
+    run = kit.run(repo)
+    assert run.returncode != 0
+    lines = run.lines()
+    assert REFUSAL in lines
+    assert lines.count(STUCK) == 1
+    assert lines[lines.index(STUCK) + 1] == f"  {config}"
+    assert not run.started
+
+
+def test_a_flags_folder_that_cannot_be_made_stops_the_start(kit: Kit) -> None:
+    repo = kit.main_clone()
+    kit.flags_dir.parent.mkdir(parents=True, exist_ok=True)
+    kit.flags_dir.write_text("not a folder\n")
+    run = kit.run(repo)
+    assert run.returncode == 1
+    assert (
+        "docker/cc: could not make this on the Mac, so the container did not start:" in run.lines()
+    )
+    assert "Traceback" not in run.stderr
+    assert kit.flagged() == []
+    assert not run.started
+
+
 def test_a_flag_the_end_cannot_clear_is_named(kit: Kit) -> None:
     repo = kit.main_clone()
     commondir = repo / ".git/commondir"
