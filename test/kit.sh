@@ -239,14 +239,17 @@ guard_main
 expect_pointers "" "from the main clone"
 
 # A start by a path in other letter case, as a shell's cd can leave it, still
-# finds the repo's own .git guarded. Only a disk that ignores case, such as
-# the Mac's, can check this.
+# finds the repo's own .git guarded. Inside, the repo mounts at that path, so
+# each file also mounts there. Only a disk that ignores case, such as the
+# Mac's, can check this.
 if [ -d "$work/main-clone" ]; then
   use_repo "$work/main-clone"
   mounts=()
   guarded_git_dirs=()
   collect_worktree_mounts "$repo"
   expect_pointers "" "from the main clone by a path in lower case"
+  is_one_of "$main_dir:$repo/.git/commondir:ro" "${mounts[@]}" ||
+    fail "by a path in lower case, mounts were: ${mounts[*]:-none}"
   guard_main
 fi
 
