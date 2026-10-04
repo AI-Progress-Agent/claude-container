@@ -98,9 +98,10 @@ def main(argv: list[str] | None = None) -> int:
     except LocalError as error:
         say("docker/cc: docker/cc.local failed, so the container did not start")
         return error.returncode or 1
-    os.environ.clear()
-    os.environ.update(local.env)
 
+    # cc.local's exports are for compose and the container. Each git command
+    # on the Mac runs with this shell's environment, as git run from this
+    # shell does, so the guards see what that git sees.
     plan = plan_run(
         Host(
             repo=repo,
@@ -110,7 +111,7 @@ def main(argv: list[str] | None = None) -> int:
             project_key=env["PROJECT_KEY"],
             settings=settings,
             local=local,
-            compose_binds=lambda: bind_targets(compose, os.environ),
+            compose_binds=lambda: bind_targets(compose, local.env),
             program=program,
             args=tuple(args),
         )
