@@ -373,9 +373,24 @@ nested_clones=(vendor/dep)
 collect_nested_clones 2>/dev/null
 [ "$(added_hooks)" = "Main-Clone/vendor/dep/dep-hooks Sib/sib-hooks" ] ||
   fail "in a writable sibling and a nested clone, hooks mounts were: $(added_hooks)"
+
+# A folder that one worktree names holds the folder that another names. Only
+# the outer one mounts, whichever worktree comes first.
+rm -rf "$repo/vendor"
+nested_clones=()
+for pair in "h/sub h" "h h/sub"; do
+  git -C "$repo" config core.hooksPath "$repo/${pair% *}"
+  git -C "$work/Sib" config core.hooksPath "$repo/${pair#* }"
+  mount_repo "$work/Main-Clone"
+  collect_sibling_repos 2>/dev/null
+  [ "$(added_hooks)" = "Main-Clone/h" ] ||
+    fail "with $pair, hooks mounts were: $(added_hooks)"
+done
+git -C "$repo" config --unset core.hooksPath
+rm -rf "$repo/h"
 writable_siblings=()
 git -C "$repo" remote remove origin
-rm -rf "$work/Sib" "$repo/vendor"
+rm -rf "$work/Sib"
 
 # Exits unless collect_hooks_paths refuses core.hooksPath = $1 in the repo.
 expect_hooks_refused() {

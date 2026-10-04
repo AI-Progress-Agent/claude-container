@@ -638,7 +638,8 @@ collect_nested_clones() {
 # Git resolves a relative value in the worktree, and in a bare repo's git
 # directory. A missing folder is made empty on the Mac first, and stays after
 # the session. A folder that is already read-only, such as .git/hooks, needs
-# nothing new. collect_folder_mounts then mounts each folder above it.
+# nothing new. Nor does a folder inside another worktree's hooks folder.
+# collect_folder_mounts then mounts each folder above it.
 #
 # The launcher cannot guard some folders. It names the worktree and the value
 # of each one, and exits before the container starts. Each one is:
@@ -652,8 +653,9 @@ collect_nested_clones() {
 # It decides on every worktree before it makes a folder, so a refused start
 # makes none.
 collect_hooks_paths() {
-  local typed_roots=() real_roots=() read_only=() refused=() hooks=()
-  local arg dir worktree value folder real root i
+  local typed_roots=() real_roots=() read_only=() refused=()
+  local hook_dirs=() hook_roots=() mounted=()
+  local arg dir worktree value folder real root_index i
   while IFS= read -r dir; do
     real=$(real_dir "$dir") || continue
     typed_roots+=("$dir")
@@ -680,14 +682,14 @@ collect_hooks_paths() {
       refused+=("$worktree: core.hooksPath = $value")
       continue
     fi
-    root=$(containing_index "$folder" "${real_roots[@]}") || continue
+    root_index=$(containing_index "$folder" "${real_roots[@]}") || continue
     is_under_any "$folder" ${read_only[@]+"${read_only[@]}"} && continue
     if holds_any "$folder" "$worktree" ${read_only[@]+"${read_only[@]}"} || ! nearest_is_dir "$folder"; then
       refused+=("$worktree: core.hooksPath = $value")
       continue
     fi
-    hooks+=("$folder" "${real_roots[root]}" "${typed_roots[root]}")
-    read_only+=("$folder")
+    hook_dirs+=("$folder")
+    hook_roots+=("$root_index")
   done < <(guarded_worktrees)
   if [ ${#refused[@]} -gt 0 ]; then
     {
@@ -697,10 +699,19 @@ collect_hooks_paths() {
     } >&2
     exit 1
   fi
-  for ((i = 0; i < ${#hooks[@]}; i += 3)); do
-    mkdir -p "${hooks[i]}"
-    add_git_file_mount "${hooks[i]}" "${hooks[i + 1]}" "${hooks[i + 2]}"
-  done
+  # Sorted, a folder comes before each folder inside it, which then needs
+  # nothing new. So the order of the worktrees does not matter.
+  while IFS= read -r i; do
+    folder=${hook_dirs[i]}
+    is_under_any "$folder" ${mounted[@]+"${mounted[@]}"} && continue
+    mounted+=("$folder")
+    mkdir -p "$folder"
+    add_git_file_mount "$folder" "${real_roots[hook_roots[i]]}" "${typed_roots[hook_roots[i]]}"
+  done < <(
+    for i in ${hook_dirs[@]+"${!hook_dirs[@]}"}; do
+      printf '%s\t%s\n' "${hook_dirs[i]}" "$i"
+    done | LC_ALL=C sort | cut -f2
+  )
 }
 
 # Prints the path of each worktree of each guarded git directory, one per
