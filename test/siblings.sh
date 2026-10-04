@@ -56,6 +56,7 @@ expected="-v $work/https-sibling:$work/https-sibling:ro \
 -v $work/rw-sibling/.git/config:$work/rw-sibling/.git/config:ro \
 -v $work/rw-sibling/.worktrees/wt/.git:$work/rw-sibling/.worktrees/wt/.git:ro \
 -v $work/rw-sibling/.git/worktrees/wt/commondir:$work/rw-sibling/.git/worktrees/wt/commondir:ro \
+-v $work/rw-sibling/.git/commondir:$work/rw-sibling/.git/commondir:ro \
 -v $work/ssh-sibling:$work/ssh-sibling:ro \
 -v $work/url-sibling:$work/url-sibling:ro"
 
@@ -71,6 +72,20 @@ done
 # A writable sibling without .git/hooks gets one made on the host, so the
 # read-only mount has a source.
 [ -d "$work/rw-sibling/.git/hooks" ] || fail "rw-sibling has no .git/hooks"
+
+# The container can write anywhere in a writable sibling, so the pointer
+# checks search it as they search the repo.
+repo=$work/this
+mounts=()
+guarded_git_dirs=()
+collect_worktree_mounts "$repo"
+collect_sibling_repos 2>/dev/null
+[ "${writable_dirs[*]}" = "$work/rw-sibling" ] || fail "writable_dirs was: ${writable_dirs[*]:-none}"
+[ -z "$(find_git_pointers)" ] || fail "with no nested clone, found: $(find_git_pointers)"
+git init -q "$work/rw-sibling/nested"
+[ "$(find_git_pointers)" = "$work/rw-sibling/nested/.git" ] ||
+  fail "with a clone in a writable sibling, found: $(find_git_pointers)"
+rm -rf "$work/rw-sibling/nested"
 
 # A clone whose origin names no owner, such as a local path, mounts nothing:
 # the siblings with no origin would otherwise match it.

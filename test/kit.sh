@@ -131,7 +131,9 @@ done
 # Each worktree's .git file and the commondir file in its git directory tell
 # git where to find the hooks and config. They mount read-only, so the
 # container cannot point git on the Mac at a config of its own. That holds
-# for every worktree of the clone, not only the one docker/cc runs from.
+# for every worktree of the clone, not only the one docker/cc runs from. The
+# main clone's .git gets a commondir that names itself, read-only, so the
+# container cannot write one that names another.
 git -C "$work/Main-Clone" worktree add -q "$work/Main-Clone/.worktrees/other"
 ro() {
   local file
@@ -143,7 +145,9 @@ agent=$work/Main-Clone/.claude/worktrees/agent/.git
 other=$work/Main-Clone/.worktrees/other/.git
 agent_dir=$work/Main-Clone/.git/worktrees/agent/commondir
 other_dir=$work/Main-Clone/.git/worktrees/other/commondir
-want=$(ro "$agent=$agent" "$other=$other" "$agent_dir=$agent_dir" "$other_dir=$other_dir")
+main_dir=$work/Main-Clone/.git/commondir
+want=$(ro "$agent=$agent" "$other=$other" "$agent_dir=$agent_dir" "$other_dir=$other_dir" \
+  "$main_dir=$main_dir")
 for dir in "$work/Main-Clone/.claude/worktrees/agent" "$work/Main-Clone"; do
   mounts=()
   collect_worktree_mounts "$dir"
@@ -153,13 +157,20 @@ mounts=()
 collect_worktree_mounts "$work/My.App"
 [ ${#mounts[@]} -eq 0 ] || fail "outside git, mounts were: ${mounts[*]}"
 
+# The commondir names the directory as ../.git, which git reads as no
+# commondir at all. libgit2 cannot open a repo whose commondir is ".".
+[ "$(cat "$main_dir")" = ../.git ] || fail "the main clone's commondir was: $(cat "$main_dir")"
+[ "$(git_common_dir "$work/Main-Clone")" = "$work/Main-Clone/.git" ] ||
+  fail "with its commondir, the main clone's common dir was $(git_common_dir "$work/Main-Clone")"
+
 # Reached through a symbolic link, the container writes each file by the
 # link's path, and git names it by its real path. Each mounts at both.
 ln -s "$work/Main-Clone" "$work/Link"
 want=$(ro "$agent=$agent" "$agent=$work/Link/.claude/worktrees/agent/.git" \
   "$other=$other" "$other=$work/Link/.worktrees/other/.git" \
   "$agent_dir=$agent_dir" "$agent_dir=$work/Link/.git/worktrees/agent/commondir" \
-  "$other_dir=$other_dir" "$other_dir=$work/Link/.git/worktrees/other/commondir")
+  "$other_dir=$other_dir" "$other_dir=$work/Link/.git/worktrees/other/commondir" \
+  "$main_dir=$main_dir" "$main_dir=$work/Link/.git/commondir")
 mounts=()
 collect_worktree_mounts "$work/Link"
 [ "${mounts[*]} " = "$want" ] || fail "through a link, mounts were: ${mounts[*]:-none}"
@@ -173,12 +184,146 @@ main_config=$work/Main-Clone/.git/config.worktree
 agent_config=$work/Main-Clone/.git/worktrees/agent/config.worktree
 other_config=$work/Main-Clone/.git/worktrees/other/config.worktree
 want=$(ro "$agent=$agent" "$other=$other" "$agent_dir=$agent_dir" "$other_dir=$other_dir" \
-  "$main_config=$main_config" "$agent_config=$agent_config" "$other_config=$other_config")
+  "$main_dir=$main_dir" "$main_config=$main_config" "$agent_config=$agent_config" \
+  "$other_config=$other_config")
 mounts=()
 collect_worktree_mounts "$work/Main-Clone"
 [ "${mounts[*]} " = "$want" ] || fail "with worktreeConfig, mounts were: ${mounts[*]:-none}"
 [ -f "$other_config" ] || fail "with worktreeConfig, $other_config was not made"
 git -C "$work/Main-Clone" config --unset extensions.worktreeConfig
+
+# A submodule's git directory, under modules/ in the main clone's .git, is a
+# git directory of its own. Git in the repo runs git there, so its hooks,
+# config and commondir mount read-only too.
+git init -q "$work/Lib"
+git -C "$work/Lib" -c user.name=test -c user.email=test commit -q --allow-empty -m init
+git -C "$work/Main-Clone" -c protocol.file.allow=always submodule add -q "$work/Lib" lib 2>/dev/null
+lib=$work/Main-Clone/.git/modules/lib
+want=$(ro "$lib/hooks=$lib/hooks" "$lib/config=$lib/config" "$lib/commondir=$lib/commondir")
+mounts=()
+collect_worktree_mounts "$work/Main-Clone"
+case "${mounts[*]} " in *"$want") ;; *) fail "with a submodule, mounts were: ${mounts[*]:-none}" ;; esac
+[ "$(cat "$lib/commondir")" = ../lib ] || fail "the submodule's commondir was: $(cat "$lib/commondir")"
+git -C "$work/Main-Clone/lib" status --short >/dev/null || fail "git fails in the submodule with its commondir"
+
+# The pointer checks. guard_main sets the mounts for the main clone afresh,
+# as a start does.
+guard_main() {
+  use_repo "$work/Main-Clone"
+  mounts=()
+  guarded_git_dirs=()
+  writable_dirs=()
+  nested_clones=()
+  collect_worktree_mounts "$repo"
+}
+# Fails unless find_git_pointers prints exactly the lines in $1.
+pointers() {
+  local found
+  found=$(find_git_pointers)
+  [ "$found" = "$1" ] || fail "$2: find_git_pointers printed: ${found:-nothing}"
+}
+git init -q "$work/evil"
+
+# The repo as a start finds it: its .git, its worktrees and its submodule
+# all lead to guarded git directories.
+guard_main
+pointers "" "from the main clone"
+
+# A clone inside the repo is refused, until nested_clones names it. Then its
+# hooks, config and commondir mount read-only, as a writable sibling's do.
+git init -q "$repo/vendor/dep"
+pointers "$repo/vendor/dep/.git" "with a nested clone"
+nested_clones=(vendor/dep/)
+collect_nested_clones 2>/dev/null
+pointers "" "with nested_clones naming the clone"
+dep=$repo/vendor/dep/.git
+for file in "$dep/hooks" "$dep/config" "$dep/commondir"; do
+  is_one_of "$file:$file:ro" "${mounts[@]}" || fail "$file did not mount read-only"
+done
+rm -rf "$repo/vendor"
+
+# A .git file that names another repo's git directory.
+mkdir -p "$repo/elsewhere"
+printf 'gitdir: %s\n' "$work/evil/.git" >"$repo/elsewhere/.git"
+guard_main
+pointers "$repo/elsewhere/.git" "with a .git file naming another repo"
+rm -rf "$repo/elsewhere"
+
+# A bare repo, which needs no .git for git to find it.
+git init -q --bare "$repo/bare"
+pointers "$repo/bare/HEAD" "with a bare repo"
+rm -rf "$repo/bare"
+
+# The Mac's disk ignores case, so git takes .GIT for .git and head for HEAD.
+# Git also takes a HEAD that is a link.
+git init -q "$repo/upper" && mv "$repo/upper/.git" "$repo/upper/.GIT"
+pointers "$repo/upper/.GIT" "with a .GIT directory"
+rm -rf "$repo/upper"
+git init -q --bare "$repo/bare"
+mv "$repo/bare/HEAD" "$repo/bare/head"
+pointers "$repo/bare/head" "with a bare repo's head in lower case"
+rm "$repo/bare/head" && ln -s refs/heads/main "$repo/bare/HEAD"
+pointers "$repo/bare/HEAD" "with a bare repo's HEAD as a link"
+rm -rf "$repo/bare"
+
+# A commondir that is a link is never written through or mounted, and a
+# start refuses it.
+git init -q "$work/linked"
+ln -s "$work/written-through" "$work/linked/.git/commondir"
+guard_main
+guard_git_dir "$work/linked/.git" "$work/linked" "$work/linked"
+[ ! -e "$work/written-through" ] || fail "the launcher wrote through a commondir link"
+is_one_of "$work/linked/.git/commondir:$work/linked/.git/commondir:ro" "${mounts[@]}" &&
+  fail "a commondir link mounted"
+pointers "$work/linked/.git/commondir" "with a commondir link"
+rm -rf "$work/linked"
+guard_main
+
+# A worktree made during the session passes while its commondir names the
+# main clone's .git. One that names another repo's does not.
+git -C "$repo" worktree add -q "$repo/.claude/worktrees/new"
+new=$work/Main-Clone/.git/worktrees/new
+pointers "" "with a worktree made during the session"
+printf '%s\n' "$work/evil/.git" >"$new/commondir"
+pointers "$repo/.claude/worktrees/new/.git" "with a worktree's commondir naming another repo"
+printf '../..\n' >"$new/commondir"
+
+# With extensions.worktreeConfig on, its config.worktree did not mount, so it
+# passes only while empty.
+git -C "$repo" config extensions.worktreeConfig true
+printf '[core]\n\thooksPath = /tmp\n' >"$new/config.worktree"
+pointers "$repo/.claude/worktrees/new/.git" "with a new worktree's config.worktree"
+: >"$new/config.worktree"
+pointers "" "with a new worktree's empty config.worktree"
+git -C "$repo" config --unset extensions.worktreeConfig
+git -C "$repo" worktree remove --force "$repo/.claude/worktrees/new"
+
+# A start refuses a commondir in the main clone's .git that names another
+# repo. Git then reads the other repo's config, so the main clone's .git no
+# longer counts as guarded.
+printf '%s\n' "$work/evil/.git" >"$repo/.git/commondir"
+guard_main
+err=$( (refuse_git_pointers) 2>&1) && fail "started with a commondir naming another repo"
+case $err in *"did not start"*"  $repo/.git"*) ;; *) fail "refusal was: $err" ;; esac
+printf '../.git\n' >"$repo/.git/commondir"
+
+# During a session, each one found moves aside, and notify_host hears of it.
+# A directory's HEAD moves aside too, so git does not take it for a bare
+# repo.
+guard_main
+git init -q "$repo/vendor/dep"
+git init -q --bare "$repo/bare"
+notify_log=$work/notify.log
+notify_host() { cat; }
+blocked=()
+block_git_pointers
+[ ${#blocked[@]} -eq 2 ] || fail "blocked was: ${blocked[*]:-none}"
+[ -f "$repo/vendor/dep/.git.cc-blocked/HEAD.cc-blocked" ] || fail "the nested .git did not move aside"
+[ -f "$repo/bare/HEAD.cc-blocked" ] || fail "the bare repo's HEAD did not move aside"
+grep -qF "docker/cc blocked $repo/bare/HEAD" "$notify_log" || fail "the notifier heard: $(cat "$notify_log")"
+pointers "" "after moving each one aside"
+rm -rf "$repo/vendor" "$repo/bare"
+unset -f notify_host
 
 # The port comes from agent-browser.json, and the browser setup names it.
 use_repo "$work/Main-Clone"

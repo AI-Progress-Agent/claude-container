@@ -40,7 +40,7 @@
 #                               inside before Claude. It can redefine
 #                               notify_host to use your own notifier. It names
 #                               in skip_marketplaces the folder marketplaces
-#                               to keep out.
+#                               to keep out, and can add to nested_clones.
 #
 # KIT_DEV, set to the path of a claude-container checkout, tries a kit change
 # on a real repo before a release. The stub runs that checkout's launcher,
@@ -100,6 +100,8 @@ main() {
   export_gh_token
   export_timezone
   load_local_overrides "$@"
+  collect_nested_clones
+  refuse_git_pointers
   collect_marketplaces
   start_notify_watcher
   run_container "$program" "$@"
@@ -120,6 +122,10 @@ main() {
 #                       drives. The cdp port in the repo's agent-browser.json,
 #                       by default. Empty, agent-browser drives nothing on
 #                       the Mac.
+#   nested_clones       the clones inside the repo kept on purpose, by their
+#                       paths in the repo. None, by default.
+#                       docker/cc.local can add more. See
+#                       collect_nested_clones.
 #
 # kit.sh is sourced inside this function, so it sets each one by plain
 # assignment. A `local` or a `declare` without -g there would be lost.
@@ -128,6 +134,7 @@ load_repo_config() {
   project_name=$(basename "$(main_clone)" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_\n-' -)-claude
   writable_siblings=()
   start_commands=true
+  nested_clones=()
   agent_browser_port=
   if [ -f "$repo/agent-browser.json" ]; then
     agent_browser_port=$(sed -nE 's/.*"cdp"[[:space:]]*:[[:space:]]*"?([0-9]+).*/\1/p' "$repo/agent-browser.json" | head -n 1)
@@ -239,7 +246,8 @@ write_dev_override() {
 }
 
 # Sets mounts, the -v arguments for the run, and links, the shell text that
-# recreates each mounted link inside.
+# recreates each mounted link inside. Empties guarded_git_dirs, which
+# guard_git_dir fills.
 collect_host_mounts() {
   # Host config to mirror, each read-only at its own path inside. A path this
   # machine does not have is left out, so any Claude setup runs as it is.
@@ -279,6 +287,7 @@ collect_host_mounts() {
   # mount in compose.local.yaml.
   mounts=()
   links=
+  guarded_git_dirs=()
   local link_dirs=()
   local path src target parent dir d i
   for path in "${optional[@]}"; do
@@ -314,10 +323,11 @@ collect_host_mounts() {
 # get past the read-only mounts of hooks and config. This covers every
 # worktree of the clone, not only the one docker/cc runs from.
 #
-# With extensions.worktreeConfig on, git also reads config.worktree in each
-# git directory, the main clone's among them. Each one mounts read-only too.
-# A missing one is made empty on the Mac first. Otherwise the container could
-# make it in the writable mount.
+# The main clone's .git gets the same guard as every git directory of its
+# own: see guard_git_dir. So does each submodule's git directory, kept under
+# modules/ in the main clone's .git. Git in the repo runs git in each
+# submodule, so a config written there runs on the Mac at git status. Each
+# one's hooks and config mount read-only too.
 #
 # Each worktree's .git file mounts even where the worktree does not. Git
 # inside would otherwise take a worktree it cannot see for a deleted one, and
@@ -338,14 +348,77 @@ collect_worktree_mounts() {
       add_git_file_mount "$file" "$real" "$dir"
     fi
   done
-  if [ "$(git -C "$dir" config --bool extensions.worktreeConfig)" = true ]; then
-    for file in "$common" "$common"/worktrees/*; do
+  guard_git_dir "$common" "$real" "$dir"
+  while IFS= read -r file; do
+    mkdir -p "$file/hooks"
+    add_git_file_mount "$file/hooks" "$real" "$dir"
+    add_git_file_mount "$file/config" "$real" "$dir"
+    guard_git_dir "$file" "$real" "$dir"
+  done < <(submodule_git_dirs "$common")
+}
+
+# Adds the git directory $1 to guarded_git_dirs, and adds to mounts,
+# read-only, the files in it that could send git elsewhere. $1 is a git
+# directory of its own, not a worktree's. $2 and $3 are as add_git_file_mount
+# takes them.
+#
+# A commondir file in $1 would send git to the hooks and config of the
+# directory it names. A missing file cannot mount: Docker would make it empty,
+# and git fails on an empty one. So a missing one is made on the Mac first,
+# naming $1 itself, which git reads as no commondir at all. It names $1 as ../
+# and $1's own name, not as ".", because libgit2 cannot open a repo whose
+# commondir is ".". One that names another directory, or is a link, does not
+# mount, and refuse_git_pointers names it. Nor is a link written through.
+#
+# With extensions.worktreeConfig on, git also reads config.worktree in $1,
+# and in each worktree's git directory under $1/worktrees. Each one mounts
+# read-only too. A missing one is made empty on the Mac first. Otherwise the
+# container could make it in the writable mount.
+guard_git_dir() {
+  local git=$1 file
+  guarded_git_dirs+=("$git")
+  file=$git/commondir
+  if [ ! -e "$file" ] && [ ! -L "$file" ]; then
+    printf '../%s\n' "$(basename "$git")" >"$file"
+  fi
+  if [ ! -L "$file" ] && names_dir "$file" "$git" "$git"; then
+    add_git_file_mount "$file" "$2" "$3"
+  fi
+  if [ "$(git config -f "$git/config" --bool extensions.worktreeConfig 2>/dev/null)" = true ]; then
+    for file in "$git" "$git"/worktrees/*; do
       if [ -d "$file" ]; then
         touch "$file/config.worktree"
-        add_git_file_mount "$file/config.worktree" "$real" "$dir"
+        add_git_file_mount "$file/config.worktree" "$2" "$3"
       fi
     done
   fi
+}
+
+# Prints the git directory of each submodule under the git directory $1, and
+# of each submodule's own submodules: each directory under a modules/ there
+# that holds a HEAD file and an objects directory.
+submodule_git_dirs() {
+  local head
+  find "$1/modules" "$1"/worktrees/*/modules -name objects -prune -o \
+    -name HEAD -type f -print 2>/dev/null |
+    while IFS= read -r head; do
+      if [ -d "${head%/HEAD}/objects" ]; then
+        printf '%s\n' "${head%/HEAD}"
+      fi
+    done
+}
+
+# Succeeds when the file $1, a commondir or a .git file, names the directory
+# $3. A relative name is relative to the directory $2. A .git file names its
+# directory after "gitdir: ".
+names_dir() {
+  local name
+  name=$(sed -n '1s/^gitdir: //;1p' "$1" 2>/dev/null) || return 1
+  case $name in
+    /*) ;;
+    *) name=$2/$name ;;
+  esac
+  [ "$(cd "$name" 2>/dev/null && pwd -P)" = "$(cd "$3" 2>/dev/null && pwd -P)" ]
 }
 
 # Adds to mounts the file $1, read-only, at the real path git names it by.
@@ -371,8 +444,10 @@ add_git_file_mount() {
 # .git/hooks and .git/config read-only, as compose.yaml mounts this repo's.
 # Git runs commands from both, so a write there from the container would run
 # on the Mac. The files that lead its worktrees to them mount read-only too.
+# Sets writable_dirs, the paths of those siblings.
 collect_sibling_repos() {
   local main parent own dir name found=() writable=()
+  writable_dirs=()
   main=$(main_clone)
   parent=$(dirname "$main")
   own=$(origin_owner "$main") || return 0
@@ -391,6 +466,7 @@ collect_sibling_repos() {
         -v "$dir/.git/hooks:$dir/.git/hooks:ro"
         -v "$dir/.git/config:$dir/.git/config:ro")
       collect_worktree_mounts "$dir"
+      writable_dirs+=("$dir")
       writable+=("$name")
     else
       mounts+=(-v "$dir:$dir:ro")
@@ -455,6 +531,142 @@ load_local_overrides() {
     # shellcheck source=/dev/null
     . "$docker_dir/cc.local"
   fi
+}
+
+# Mounts each clone that nested_clones names by its path in the repo, as
+# collect_sibling_repos mounts a writable sibling: its .git/hooks, its
+# .git/config and the files that lead git to them, read-only. A clone inside
+# the repo is otherwise a .git that the container could write, and
+# refuse_git_pointers would refuse to start. A named path with no clone yet
+# stays unguarded, so a clone made there during the session is blocked.
+collect_nested_clones() {
+  local path dir guarded=()
+  for path in ${nested_clones[@]+"${nested_clones[@]}"}; do
+    dir=$repo/${path%/}
+    if [ ! -d "$dir/.git" ]; then
+      echo "docker/cc: nested clone $path has no .git directory, so a clone made there gets blocked" >&2
+      continue
+    fi
+    mkdir -p "$dir/.git/hooks"
+    mounts+=(-v "$dir/.git/hooks:$dir/.git/hooks:ro"
+      -v "$dir/.git/config:$dir/.git/config:ro")
+    collect_worktree_mounts "$dir"
+    guarded+=("$path")
+  done
+  if [ ${#guarded[@]} -gt 0 ]; then
+    echo "docker/cc: guarded nested clones: ${guarded[*]}" >&2
+  fi
+}
+
+# Exits before the container starts when find_git_pointers finds a file. The
+# file is already on the Mac, so the launcher names it and leaves it for you.
+refuse_git_pointers() {
+  local found=() path
+  while IFS= read -r path; do
+    found+=("$path")
+  done < <(find_git_pointers)
+  [ ${#found[@]} -gt 0 ] || return 0
+  {
+    echo "docker/cc: these could lead git on the Mac to hooks or a config written inside, so the container did not start:"
+    printf '  %s\n' "${found[@]}"
+    echo "Delete each one. To keep a clone inside the repo, add its path to nested_clones in docker/kit.sh or docker/cc.local."
+  } >&2
+  exit 1
+}
+
+# Prints each path that could lead git on the Mac to hooks or a config that
+# the container wrote, one per line. The repo and each writable sibling are
+# searched, since the container can write anywhere in them. A path is one of:
+#
+#   - a commondir in a guarded git directory that names another directory, or
+#     is a link
+#   - a .git, as a directory, a file or a link, that does not lead to a
+#     guarded git directory. See leads_to_guarded.
+#   - the HEAD of a bare repo: a directory with HEAD, objects and refs in it.
+#     Git run there takes the directory for a git directory, with no .git.
+#     HEAD can be a link too.
+#
+# The Mac's disk ignores case by default, so git takes .GIT for .git, and
+# head for HEAD. The search ignores case too. It does not go into a .git, so
+# the git directories themselves, guarded or not, are not searched.
+find_git_pointers() {
+  local dir path
+  for dir in ${guarded_git_dirs[@]+"${guarded_git_dirs[@]}"}; do
+    if [ -L "$dir/commondir" ] ||
+      { [ -e "$dir/commondir" ] && ! names_dir "$dir/commondir" "$dir" "$dir"; }; then
+      printf '%s\n' "$dir/commondir"
+    fi
+  done
+  while IFS= read -r path; do
+    case $path in
+      */.[gG][iI][tT])
+        leads_to_guarded "$path" || printf '%s\n' "$path"
+        ;;
+      */[hH][eE][aA][dD])
+        if [ -d "$(dirname "$path")/objects" ] && [ -d "$(dirname "$path")/refs" ]; then
+          printf '%s\n' "$path"
+        fi
+        ;;
+    esac
+  done < <(find "$repo" ${writable_dirs[@]+"${writable_dirs[@]}"} \
+    -iname .git -prune -print -o -iname HEAD \( -type f -o -type l \) -print 2>/dev/null)
+}
+
+# Succeeds when the .git at $1 leads git to a guarded git directory. It does
+# when it is one, or names one. It also does when it names a worktree's git
+# directory, <guarded>/worktrees/<name>, and both files git reads there are
+# safe. Its commondir must name that guarded directory. Its config.worktree,
+# read only with extensions.worktreeConfig on, must be empty or read-only.
+# git worktree add inside makes such a worktree, so this lets one through.
+leads_to_guarded() {
+  local gitdir common
+  if [ -d "$1" ]; then
+    gitdir=$(cd "$1" && pwd -P)
+  else
+    gitdir=$(sed -n 's/^gitdir: //p' "$1" 2>/dev/null | head -n 1)
+    case $gitdir in
+      '') return 1 ;;
+      /*) ;;
+      *) gitdir=$(dirname "$1")/$gitdir ;;
+    esac
+    gitdir=$(cd "$gitdir" 2>/dev/null && pwd -P) || return 1
+  fi
+  is_one_of "$gitdir" ${guarded_git_dirs[@]+"${guarded_git_dirs[@]}"} && return 0
+  [ "$(basename "$(dirname "$gitdir")")" = worktrees ] || return 1
+  common=$(dirname "$(dirname "$gitdir")")
+  is_one_of "$common" ${guarded_git_dirs[@]+"${guarded_git_dirs[@]}"} || return 1
+  names_dir "$gitdir/commondir" "$gitdir" "$common" || return 1
+  [ -s "$gitdir/config.worktree" ] || return 0
+  [ "$(git config -f "$common/config" --bool extensions.worktreeConfig 2>/dev/null)" != true ] ||
+    is_one_of "$gitdir/config.worktree:$gitdir/config.worktree:ro" ${mounts[@]+"${mounts[@]}"}
+}
+
+# Moves aside each path that find_git_pointers prints, so git on the Mac
+# stops reading it: <path>.cc-blocked, or a name with a number after it when
+# that is taken. A directory's HEAD moves aside too, or git would take the
+# moved directory for a bare repo. Each move goes to notify_host as a
+# Notification event, and its path is added to blocked.
+block_git_pointers() {
+  local path to
+  while IFS= read -r path; do
+    to=$path.cc-blocked
+    if [ -e "$to" ] || [ -L "$to" ]; then
+      to=$to-$RANDOM$RANDOM
+    fi
+    mv "$path" "$to" 2>/dev/null || continue
+    if [ -d "$to" ] && [ ! -L "$to" ] && { [ -e "$to/HEAD" ] || [ -L "$to/HEAD" ]; }; then
+      mv "$to/HEAD" "$to/HEAD.cc-blocked" 2>/dev/null || true
+    fi
+    blocked+=("$path")
+    (cd "$repo" && notify_host) >>"${notify_log:-/dev/null}" 2>&1 <<EOF || true
+{"hook_event_name":"Notification","cwd":"$(json_escape "$repo")","message":"docker/cc blocked $(json_escape "$path"): it could lead git on the Mac to hooks or a config written inside"}
+EOF
+  done < <(find_git_pointers)
+}
+
+# Prints $1 with each backslash and double quote escaped for a JSON string.
+json_escape() {
+  printf '%s' "$1" | sed 's/[\\"]/\\&/g'
 }
 
 # Adds to mounts, read-only at its own path, each folder that a plugin
@@ -624,12 +836,19 @@ notify_host() {
   if command -v cc-notify.mjs >/dev/null; then cc-notify.mjs; fi
 }
 
+# Every tenth pass, about every 5 s, the loop also runs block_git_pointers.
+# A full search of the repo takes too long to run on every pass. It runs once
+# more when the session ends, then names here each path it moved aside.
 watch_events() {
-  local event cwd
+  local event cwd pass=0 blocked=()
   # A hangup or TERM that reaches the loop still removes the directory.
   trap 'rm -rf "$notify_dir"' EXIT
   trap exit HUP TERM
   while kill -0 $$ 2>/dev/null; do
+    pass=$((pass + 1))
+    if [ $((pass % 10)) -eq 0 ]; then
+      block_git_pointers
+    fi
     for event in "$notify_dir"/*.json; do
       [ -e "$event" ] || continue
       # The repo mounts at its own path, so a directory under it inside is
@@ -652,6 +871,11 @@ watch_events() {
     done
     sleep 0.5
   done
+  block_git_pointers
+  if [ ${#blocked[@]} -gt 0 ]; then
+    echo "docker/cc: moved aside to .cc-blocked, since each could lead git on the Mac to hooks or a config written inside:" >&2
+    printf '  %s\n' "${blocked[@]}" >&2
+  fi
 }
 
 # The tests in the kit's test/ source this file, so main runs only when the
