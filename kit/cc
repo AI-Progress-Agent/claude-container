@@ -676,8 +676,7 @@ collect_hooks_paths() {
   while IFS= read -r worktree; do
     # Git refuses an empty value, so it runs no hook.
     value=$(git -C "$worktree" config core.hooksPath 2>/dev/null) && [ -n "$value" ] || continue
-    folder=$(absolute_path "$(git -C "$worktree" config --type=path core.hooksPath)" "$worktree")
-    if ! folder=$(follow_links "$folder" "${real_roots[@]}") ||
+    if ! folder=$(hooks_folder "$worktree" "${real_roots[@]}") ||
       holds_any "$folder" "${real_roots[@]}"; then
       refused+=("$worktree: core.hooksPath = $value")
       continue
@@ -712,6 +711,16 @@ collect_hooks_paths() {
       printf '%s\t%s\n' "${hook_dirs[i]}" "$i"
     done | LC_ALL=C sort | cut -f2
   )
+}
+
+# Prints the folder that core.hooksPath names for the worktree $1, as
+# follow_links prints it. The other arguments are as follow_links takes
+# them. Fails when git cannot expand the value, or when follow_links fails.
+hooks_folder() {
+  local worktree=$1 value
+  shift
+  value=$(git -C "$worktree" config --type=path core.hooksPath 2>/dev/null) || return 1
+  follow_links "$(absolute_path "$value" "$worktree")" "$@"
 }
 
 # Prints the path of each worktree of each guarded git directory, one per
