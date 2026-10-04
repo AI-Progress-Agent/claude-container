@@ -11,23 +11,12 @@ import json
 import subprocess
 from pathlib import Path
 
-from harness import FORWARD, Kit
+from harness import FORWARD, Kit, send_event
 
 
 def send_events(kit: Kit, *cwds: str) -> None:
     """In place of the container, sends a Stop event from each folder in turn."""
-    sends = "".join(
-        f"""
-printf '%s' {json.dumps(json.dumps({"hook_event_name": "Stop", "cwd": cwd}))} |
-  CC_NOTIFY_DIR="$NOTIFY_DIR" sh '{FORWARD}'
-for _ in $(seq 50); do
-  [ -n "$(ls "$NOTIFY_DIR")" ] || break
-  sleep 0.1
-done
-"""
-        for cwd in cwds
-    )
-    kit.on_run(sends)
+    kit.on_run("".join(send_event(event(cwd)) for cwd in cwds))
 
 
 def event(cwd: str | Path) -> str:

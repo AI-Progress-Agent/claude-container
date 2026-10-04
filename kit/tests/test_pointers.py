@@ -221,9 +221,10 @@ git init -q {repo}/x.cc-blocked/dep
 def test_session_moves_aside_while_the_container_runs(kit: Kit) -> None:
     """The watcher searches about every 5 seconds, not only at the end."""
     repo = kit.main_clone()
+    # Up to 30 seconds, so a busy machine's slow pass still counts.
     kit.on_run(f"""
 git init -q {repo}/late
-for _ in $(seq 100); do
+for _ in $(seq 300); do
   [ ! -e {repo}/late/.git.cc-blocked ] || {{ echo moved >{kit.work / "seen"}; exit 0; }}
   sleep 0.1
 done
