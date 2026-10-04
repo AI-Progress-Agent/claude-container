@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Checks collect_marketplaces in the launcher, kit/cc, without Docker. It
-# writes a known_marketplaces.json with folder marketplaces in each state,
-# then checks that only the folders the container does not already see are
-# mounted, each read-only, and that skip_marketplaces keeps one out.
+# writes a known_marketplaces.json and a settings.json with folder
+# marketplaces in each state. It then checks that only the folders the
+# container does not already see are mounted, each read-only. It also checks
+# that skip_marketplaces keeps one out.
 set -euo pipefail
 
 # Source the launcher for the real code. It sets repo for itself, so the test
@@ -110,5 +111,35 @@ mounts=()
 collect_marketplaces 2>"$work/err"
 [ ${#mounts[@]} -eq 0 ] && [ ! -s "$work/err" ] ||
   fail "without the file, mounts were: ${mounts[*]:-none}, and it printed: $(cat "$work/err")"
+
+# settings.json names folder marketplaces too. Its entry wins when
+# known_marketplaces.json lacks it or names another path. A path may hold a
+# backslash or a tab.
+odd=$work/src/back\\slash$'\t'tab
+mkdir -p "$work/src/new" "$work/src/moved" "$odd"
+write_known moving="$work/src/old"
+jq -n --arg new "$work/src/new" --arg moved "$work/src/moved" --arg odd "$odd" \
+  '{extraKnownMarketplaces: {
+    new: {source: {source: "directory", path: $new}},
+    moving: {source: {source: "directory", path: $moved}},
+    odd: {source: {source: "directory", path: $odd}},
+    remote: {source: {source: "github", repo: "o/r"}}}}' >"$HOME/.claude/settings.json"
+mounts=()
+collect_marketplaces 2>"$work/err"
+expected="-v $odd:$odd:ro -v $work/src/moved:$work/src/moved:ro -v $work/src/new:$work/src/new:ro"
+[ "${mounts[*]}" = "$expected" ] || fail "with settings.json, mounts were: ${mounts[*]}"
+
+# When docker compose config fails, the marketplace still mounts, and a line
+# says the compose files went unread.
+failing_compose() { return 1; }
+compose=(failing_compose)
+rm -f "$HOME/.claude/settings.json"
+write_known mine="$work/src/mine"
+mounts=()
+collect_marketplaces 2>"$work/err"
+[ "${mounts[*]}" = "-v $work/src/mine:$work/src/mine:ro" ] ||
+  fail "with compose failing, mounts were: ${mounts[*]}"
+grep -q "docker compose config failed" "$work/err" ||
+  fail "no compose line in: $(cat "$work/err")"
 
 echo "ok"

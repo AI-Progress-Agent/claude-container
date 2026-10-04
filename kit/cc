@@ -446,38 +446,32 @@ load_local_overrides() {
 
 # Adds to mounts, read-only at its own path, each folder that a plugin
 # marketplace is read from on the Mac. Claude inside drops a marketplace's
-# plugins when it cannot read the folder. known_marketplaces.json lists
-# every marketplace, from settings.json and from /plugin marketplace add
-# alike. Those with a source of "directory" are the folders.
+# plugins when it cannot read the folder. folder_marketplaces finds them.
 #
 # A marketplace named in skip_marketplaces stays out, such as one that
-# belongs to another client. So does a folder the container already sees:
-# one at or under the repo, a sibling repo, or a bind mount in the compose
-# files, compose.local.yaml among them. A second mount there adds nothing,
-# and under a writable mount it would turn the folder read-only.
+# belongs to another client. So does a folder the container already sees.
+# That is a folder at or under the repo or a sibling repo. It is also one at
+# or under a bind mount in any compose file, compose.local.yaml among them. A
+# second mount there adds nothing. Under a writable mount, it would turn the
+# folder read-only.
 collect_marketplaces() {
-  local file=$HOME/.claude/plugins/known_marketplaces.json
-  [ -f "$file" ] || return 0
+  local known=$HOME/.claude/plugins/known_marketplaces.json
+  local settings=$HOME/.claude/settings.json
+  [ -f "$known" ] || [ -f "$settings" ] || return 0
   if ! command -v jq >/dev/null; then
     echo "docker/cc: jq is missing, so no folder marketplace mounted and their plugins will not load" >&2
     return 0
   fi
   local entries
-  # Sorted by path, so a folder inside another marketplace's folder comes
-  # after it, and counts as visible.
-  if ! entries=$(jq -r 'to_entries
-      | map(select(.value.source.source == "directory")
-        | [.key, (.value.installLocation // .value.source.path)])
-      | sort_by(.[1])[] | @tsv' "$file"); then
-    echo "docker/cc: $file does not read as JSON, so no folder marketplace mounted" >&2
+  if ! entries=$(folder_marketplaces "$known" "$settings"); then
+    echo "docker/cc: $known or $settings does not read as JSON, so no folder marketplace mounted" >&2
     return 0
   fi
   local name path arg visible=("$repo") compose_read="" mounted=() skipped=()
   for arg in ${mounts[@]+"${mounts[@]}"}; do
     [ "$arg" = -v ] || visible+=("$(mount_target "$arg")")
   done
-  while IFS=$'\t' read -r name path; do
-    [ -n "$name" ] || continue
+  while IFS= read -r name && IFS= read -r path; do
     if is_one_of "$name" ${skip_marketplaces[@]+"${skip_marketplaces[@]}"}; then
       skipped+=("$name")
       continue
@@ -506,6 +500,29 @@ collect_marketplaces() {
   fi
 }
 
+# Prints each folder marketplace as two lines: its name, then its path.
+# $1 is known_marketplaces.json and $2 is settings.json. Either may be
+# missing. known_marketplaces.json lists every marketplace, from settings.json
+# and from /plugin marketplace add alike. Those with a source of "directory"
+# are the folders. The file can lag behind settings.json, such as on a new
+# machine. So an entry under extraKnownMarketplaces in settings.json wins
+# when the file's entry differs or is missing.
+#
+# Sorted by path, so a folder inside another marketplace's folder comes
+# after it, and counts as visible.
+folder_marketplaces() {
+  jq -n -r \
+    --slurpfile known <(cat "$1" 2>/dev/null) \
+    --slurpfile settings <(cat "$2" 2>/dev/null) '
+    reduce (($settings[0].extraKnownMarketplaces // {}) | to_entries[]) as $e
+      ($known[0] // {};
+        if .[$e.key].source == $e.value.source then . else .[$e.key] = $e.value end)
+    | to_entries
+    | map(select(.value.source.source == "directory")
+      | [.key, (.value.installLocation // .value.source.path)])
+    | sort_by(.[1])[][]'
+}
+
 # Prints the path inside of the -v argument $1, source:target or
 # source:target:ro.
 mount_target() {
@@ -517,8 +534,12 @@ mount_target() {
 # claude service. A named volume, such as the login's, holds none of the
 # Mac's files, so it does not count.
 compose_bind_targets() {
-  "${compose[@]}" config --format json 2>/dev/null |
-    jq -r '.services.claude.volumes[]? | select(.type == "bind") | .target' 2>/dev/null || true
+  local config
+  if ! config=$("${compose[@]}" config --format json 2>/dev/null); then
+    echo "docker/cc: docker compose config failed, so a marketplace that a compose file mounts may mount twice" >&2
+    return 0
+  fi
+  jq -r '.services.claude.volumes[]? | select(.type == "bind") | .target' <<<"$config"
 }
 
 # Succeeds when the path $1 is one of the other arguments, or under one.
