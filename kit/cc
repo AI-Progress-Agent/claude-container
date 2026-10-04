@@ -652,7 +652,7 @@ collect_nested_clones() {
 #     container could swap that folder for a link.
 #   - a path through a file, which cannot be a folder
 #
-# It decides on every worktree before it makes a folder, so a refused start
+# It decides on every worktree before it makes a folder, so its own refusal
 # makes none.
 collect_hooks_paths() {
   local typed_roots=() real_roots=() read_only=() refused=()

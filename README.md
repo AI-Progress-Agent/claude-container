@@ -435,6 +435,11 @@ install that sets it, such as `pnpm install` with Husky, on the Mac before
 cannot set `core.hooksPath`, because `.git/config` is read-only. Husky then
 writes no file and exits 0.
 
+The launcher reads `core.hooksPath` for the branch checked out at start. An
+`[includeIf "onbranch:..."]` section can set it for some branches only. The
+container can switch branch, so git on the Mac may then read another value.
+Do not set `core.hooksPath` in such a section.
+
 The launcher guards only the worktrees that exist at start. A worktree that
 `git worktree add` makes inside has a writable hooks folder. So does a
 worktree whose folder is missing at start, if the container makes it again.
