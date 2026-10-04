@@ -15,5 +15,5 @@ writable_siblings=()
 start_commands=true
 
 # Clones and bare repos kept inside the repo on purpose, by their paths in
-# the repo.
+# the repo. A clone inside a writable sibling goes by its absolute path.
 nested_clones=()
