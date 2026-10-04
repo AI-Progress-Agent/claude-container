@@ -90,8 +90,8 @@ def block_hooks_folders(scope: PointerScope, notify: Callable[[str], None]) -> l
 
     The container can make a folder that the launcher cannot guard, such as
     a link, or a folder that holds a worktree. Then the first link on the
-    way moves aside, so git on the Mac finds no folder. With no link, the
-    worktree's .git file moves aside, so git on the Mac no longer takes the
+    way moves aside, and git on the Mac finds no folder. With no link, the
+    worktree's .git file moves aside. Git on the Mac then no longer takes the
     folder for a worktree. A .git folder never moves.
 
     Each move goes to notify, as block_git_pointers sends it. Returns each

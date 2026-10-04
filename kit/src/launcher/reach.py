@@ -1,7 +1,8 @@
 """Where the container can write, and where a path that git on the Mac reads sits against it.
 
-A path that git on the Mac reads or runs needs a read-only mount when it sits
-inside a writable mount. The launcher cannot guard some paths. Each one is:
+Git on the Mac reads or runs some paths. Such a path needs a read-only mount
+when it sits inside a writable mount. The launcher cannot guard some paths.
+Each one is:
 
   - a writable mount, or a folder that holds one
   - inside a writable mount, and holds a folder the caller names, such as its
