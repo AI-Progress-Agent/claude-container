@@ -14,7 +14,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from harness import FORWARD, Kit
+from harness import Kit, send_event
 
 MAIN_FLAGGED = [
     "Main-Clone/.claude/worktrees/agent/.git",
@@ -190,16 +190,12 @@ def test_a_term_to_the_watcher_waits_for_compose_then_ends_the_session(kit: Kit)
     """A closed terminal can reach the watcher before compose ends."""
     repo = kit.main_clone()
     after_term = kit.work / "after-term"
-    kit.on_run(f"""
-# The watcher has set its traps once it takes an event.
-printf '{{}}' | CC_NOTIFY_DIR="$NOTIFY_DIR" sh '{FORWARD}'
-for _ in $(seq 50); do
-  [ -n "$(ls "$NOTIFY_DIR")" ] || break
-  sleep 0.1
-done
+    termed = kit.work / "termed"
+    # The watcher has set its traps once it takes an event.
+    kit.on_run(f"""{send_event("{}")}
 pgrep -P "$DOCKER_PID" >'{kit.work / "children"}' || true
 while read -r pid; do
-  [ "$pid" = $$ ] || kill -TERM "$pid"
+  [ "$pid" = $$ ] || {{ kill -TERM "$pid"; echo "$pid" >>'{termed}'; }}
 done <'{kit.work / "children"}'
 sleep 1
 # The flags stay set while the container can still write.
@@ -208,6 +204,7 @@ git init -q '{repo}/late'
 """)
     run = kit.run(repo)
     assert run.returncode == 0, run.stderr
+    assert termed.exists(), "no watcher took the TERM"
     assert kit.rel(after_term.read_text().splitlines()) == MAIN_FLAGGED
     # Then it runs the last search, clears the flags and removes its folder.
     assert (repo / "late/.git.cc-blocked").is_dir()

@@ -84,7 +84,15 @@ def lines(path):
     return path.read_text().splitlines() if path.exists() else None
 
 
-record = Path(os.environ.get("TMPDIR", "/tmp")) / "cc-flags" / str(os.getpid())
+# The launcher's record is named after its process ID. Bash hands its process
+# to compose, so the record is named after this one. A launcher that runs
+# compose as a child would name it after this one's parent.
+flags_dir = Path(os.environ.get("TMPDIR", "/tmp")) / "cc-flags"
+record = next(
+    (flags_dir / str(pid) for pid in (os.getpid(), os.getppid())
+     if (flags_dir / str(pid)).exists()),
+    flags_dir / str(os.getpid()),
+)
 with (fake / "docker.jsonl").open("a") as log:
     log.write(json.dumps({
         "argv": argv,
@@ -121,8 +129,8 @@ def compose_run(args):
     if not hook.exists():
         return 0
     notify = ""
-    for i, arg in enumerate(args):
-        if args[i - 1] == "-v" and arg.endswith(":/run/cc-notify"):
+    for flag, arg in zip(args, args[1:]):
+        if flag == "-v" and arg.endswith(":/run/cc-notify"):
             notify = arg.removesuffix(":/run/cc-notify")
     env = {**os.environ, "NOTIFY_DIR": notify, "DOCKER_PID": str(os.getpid())}
     return subprocess.run([str(hook)], env=env, check=False).returncode
@@ -608,6 +616,20 @@ def hooks_mounts(container: Container, kit: Kit, *roots: Path) -> list[str]:
     )
 
 
+def send_event(event: str) -> str:
+    """Run-hook text that sends event as the image's hooks do.
+
+    It waits until the watcher has taken the event from the notify folder.
+    """
+    return f"""
+printf '%s' {shlex.quote(event)} | CC_NOTIFY_DIR="$NOTIFY_DIR" sh '{FORWARD}'
+for _ in $(seq 50); do
+  [ -n "$(ls "$NOTIFY_DIR")" ] || break
+  sleep 0.1
+done
+"""
+
+
 def ignores_case(folder: Path) -> bool:
     """Whether the disk that holds folder ignores letter case, as the Mac's does."""
     probe = folder / "case-probe"
@@ -645,9 +667,10 @@ def _run_and_reap(
 
     assert proc.stdout is not None
     assert proc.stderr is not None
+    # Daemons, so a watcher that never ends fails the test and not the run.
     readers = [
-        threading.Thread(target=read, args=("stdout", proc.stdout)),
-        threading.Thread(target=read, args=("stderr", proc.stderr)),
+        threading.Thread(target=read, args=("stdout", proc.stdout), daemon=True),
+        threading.Thread(target=read, args=("stderr", proc.stderr), daemon=True),
     ]
     for reader in readers:
         reader.start()

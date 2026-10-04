@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import pwd
 import re
 from pathlib import Path
 
@@ -30,9 +31,10 @@ def test_project_name_takes_only_what_compose_accepts(kit: Kit) -> None:
 def test_defaults_run_nothing_before_claude(kit: Kit) -> None:
     repo = kit.clone(kit.src / "app")
     run = kit.run(repo)
-    assert run.container.setup == '{ true; } && { true; } && exec claude "$@"'
     inside = kit.start_container(run.container)
     assert inside.returncode == 0, inside.stderr
+    assert Path(inside.program[0]).name == "claude"
+    assert inside.program[1:] == []
     assert inside.links == []
     assert inside.cdp is None
 
@@ -116,7 +118,7 @@ def test_environment_for_compose(kit: Kit) -> None:
         "REPO_GIT": str(repo / ".git"),
         "REPO_GIT_MODE": "rw",
         "HOST_HOME": str(kit.home),
-        "HOST_USER": os.environ.get("USER") or env["HOST_USER"],
+        "HOST_USER": pwd.getpwuid(os.getuid()).pw_name,
         "PROJECT_KEY": key,
         "GH_TOKEN": "gho_fake",
         "TZ": zone,

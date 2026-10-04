@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from harness import Kit, read_only
+from harness import Container, Kit, read_only
 
 
 @pytest.fixture
@@ -47,6 +47,15 @@ def writable(kit: Kit, where: Path, nested_clones: list[str] | None = None) -> N
     )
 
 
+def sibling_mounts(kit: Kit, container: Container, repo: Path) -> list[tuple[str, bool]]:
+    """Each clone next to repo that mounts, by name, and whether read-only."""
+    return sorted(
+        (Path(m.target).name, m.read_only)
+        for m in container.mounts
+        if Path(m.target).parent == kit.src and m.target != str(repo)
+    )
+
+
 @pytest.mark.parametrize("where", [".", ".worktrees/wt", ".claude/worktrees/agent"])
 def test_only_clones_with_this_origins_owner_mount(kit: Kit, this: Path, where: str) -> None:
     # A repo commits docker/kit.sh, so each worktree has it. Here it goes
@@ -54,12 +63,7 @@ def test_only_clones_with_this_origins_owner_mount(kit: Kit, this: Path, where: 
     writable(kit, this / where)
     run = kit.run(this / where)
     assert run.returncode == 0, run.stderr
-    siblings = sorted(
-        (Path(m.target).name, m.read_only)
-        for m in run.container.mounts
-        if Path(m.target).parent == kit.src and m.target != str(this)
-    )
-    assert siblings == [
+    assert sibling_mounts(kit, run.container, this) == [
         ("https-sibling", True),
         ("rw-sibling", False),
         ("ssh-sibling", True),
@@ -75,6 +79,18 @@ def test_only_clones_with_this_origins_owner_mount(kit: Kit, this: Path, where: 
     ]
     assert "docker/cc: mounted read-only: https-sibling ssh-sibling url-sibling" in run.lines()
     assert "docker/cc: mounted writable: rw-sibling" in run.lines()
+
+
+def test_without_settings_each_sibling_mounts_read_only(kit: Kit, this: Path) -> None:
+    run = kit.run(this)
+    assert run.returncode == 0, run.stderr
+    assert sibling_mounts(kit, run.container, this) == [
+        ("https-sibling", True),
+        ("rw-sibling", True),
+        ("ssh-sibling", True),
+        ("url-sibling", True),
+    ]
+    assert "mounted writable" not in run.stderr
 
 
 def test_writable_sibling_without_hooks_gets_them_made(kit: Kit, this: Path) -> None:
