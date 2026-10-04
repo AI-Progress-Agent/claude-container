@@ -14,5 +14,6 @@ writable_siblings=()
 # Run inside at each start, before your docker/cc.local's local_setup.
 start_commands=true
 
-# Clones kept inside the repo on purpose, by their paths in the repo.
+# Clones and bare repos kept inside the repo on purpose, by their paths in
+# the repo.
 nested_clones=()

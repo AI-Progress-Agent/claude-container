@@ -206,6 +206,15 @@ case "${mounts[*]} " in *"$want") ;; *) fail "with a submodule, mounts were: ${m
 [ "$(cat "$lib/commondir")" = ../lib ] || fail "the submodule's commondir was: $(cat "$lib/commondir")"
 git -C "$work/Main-Clone/lib" status --short >/dev/null || fail "git fails in the submodule with its commondir"
 
+# A worktree of the submodule has a commondir in the submodule's git
+# directory, and it mounts read-only too.
+git -C "$work/Main-Clone/lib" worktree add -q "$work/lib-wt"
+mounts=()
+collect_worktree_mounts "$work/Main-Clone"
+file=$lib/worktrees/lib-wt/commondir
+is_one_of "$file:$file:ro" "${mounts[@]}" || fail "the submodule's worktree commondir did not mount"
+git -C "$work/Main-Clone/lib" worktree remove "$work/lib-wt"
+
 # The pointer checks. guard_main sets the mounts for the main clone afresh,
 # as a start does.
 guard_main() {
@@ -217,7 +226,7 @@ guard_main() {
   collect_worktree_mounts "$repo"
 }
 # Fails unless find_git_pointers prints exactly the lines in $1.
-pointers() {
+expect_pointers() {
   local found
   found=$(find_git_pointers)
   [ "$found" = "$1" ] || fail "$2: find_git_pointers printed: ${found:-nothing}"
@@ -227,15 +236,27 @@ git init -q "$work/evil"
 # The repo as a start finds it: its .git, its worktrees and its submodule
 # all lead to guarded git directories.
 guard_main
-pointers "" "from the main clone"
+expect_pointers "" "from the main clone"
+
+# A start by a path in other letter case, as a shell's cd can leave it, still
+# finds the repo's own .git guarded. Only a disk that ignores case, such as
+# the Mac's, can check this.
+if [ -d "$work/main-clone" ]; then
+  use_repo "$work/main-clone"
+  mounts=()
+  guarded_git_dirs=()
+  collect_worktree_mounts "$repo"
+  expect_pointers "" "from the main clone by a path in lower case"
+  guard_main
+fi
 
 # A clone inside the repo is refused, until nested_clones names it. Then its
 # hooks, config and commondir mount read-only, as a writable sibling's do.
 git init -q "$repo/vendor/dep"
-pointers "$repo/vendor/dep/.git" "with a nested clone"
+expect_pointers "$repo/vendor/dep/.git" "with a nested clone"
 nested_clones=(vendor/dep/)
 collect_nested_clones 2>/dev/null
-pointers "" "with nested_clones naming the clone"
+expect_pointers "" "with nested_clones naming the clone"
 dep=$repo/vendor/dep/.git
 for file in "$dep/hooks" "$dep/config" "$dep/commondir"; do
   is_one_of "$file:$file:ro" "${mounts[@]}" || fail "$file did not mount read-only"
@@ -246,24 +267,49 @@ rm -rf "$repo/vendor"
 mkdir -p "$repo/elsewhere"
 printf 'gitdir: %s\n' "$work/evil/.git" >"$repo/elsewhere/.git"
 guard_main
-pointers "$repo/elsewhere/.git" "with a .git file naming another repo"
+expect_pointers "$repo/elsewhere/.git" "with a .git file naming another repo"
 rm -rf "$repo/elsewhere"
 
 # A bare repo, which needs no .git for git to find it.
 git init -q --bare "$repo/bare"
-pointers "$repo/bare/HEAD" "with a bare repo"
+expect_pointers "$repo/bare/HEAD" "with a bare repo"
 rm -rf "$repo/bare"
+
+# Git looks for objects and refs in the directory a commondir names, and
+# takes them as files too.
+mkdir -p "$repo/odd/common" "$repo/odd/files"
+printf 'ref: refs/heads/main\n' >"$repo/odd/common/HEAD"
+printf '%s\n' "$work/evil/.git" >"$repo/odd/common/commondir"
+expect_pointers "$repo/odd/common/HEAD" "with a HEAD beside a commondir"
+rm -rf "$repo/odd/common"
+printf 'ref: refs/heads/main\n' >"$repo/odd/files/HEAD"
+touch "$repo/odd/files/objects" "$repo/odd/files/refs"
+chmod +x "$repo/odd/files/objects" "$repo/odd/files/refs"
+expect_pointers "$repo/odd/files/HEAD" "with objects and refs as files"
+rm -rf "$repo/odd"
+
+# nested_clones can name a bare repo, such as a test fixture. Its hooks,
+# config and commondir then mount read-only, and its HEAD passes.
+git init -q --bare "$repo/fixture"
+nested_clones=(fixture)
+collect_nested_clones 2>/dev/null
+expect_pointers "" "with nested_clones naming a bare repo"
+for file in "$repo/fixture/hooks" "$repo/fixture/config" "$repo/fixture/commondir"; do
+  is_one_of "$file:$file:ro" "${mounts[@]}" || fail "$file did not mount read-only"
+done
+rm -rf "$repo/fixture"
+guard_main
 
 # The Mac's disk ignores case, so git takes .GIT for .git and head for HEAD.
 # Git also takes a HEAD that is a link.
 git init -q "$repo/upper" && mv "$repo/upper/.git" "$repo/upper/.GIT"
-pointers "$repo/upper/.GIT" "with a .GIT directory"
+expect_pointers "$repo/upper/.GIT" "with a .GIT directory"
 rm -rf "$repo/upper"
 git init -q --bare "$repo/bare"
 mv "$repo/bare/HEAD" "$repo/bare/head"
-pointers "$repo/bare/head" "with a bare repo's head in lower case"
+expect_pointers "$repo/bare/head" "with a bare repo's head in lower case"
 rm "$repo/bare/head" && ln -s refs/heads/main "$repo/bare/HEAD"
-pointers "$repo/bare/HEAD" "with a bare repo's HEAD as a link"
+expect_pointers "$repo/bare/HEAD" "with a bare repo's HEAD as a link"
 rm -rf "$repo/bare"
 
 # A commondir that is a link is never written through or mounted, and a
@@ -275,7 +321,7 @@ guard_git_dir "$work/linked/.git" "$work/linked" "$work/linked"
 [ ! -e "$work/written-through" ] || fail "the launcher wrote through a commondir link"
 is_one_of "$work/linked/.git/commondir:$work/linked/.git/commondir:ro" "${mounts[@]}" &&
   fail "a commondir link mounted"
-pointers "$work/linked/.git/commondir" "with a commondir link"
+expect_pointers "$work/linked/.git/commondir" "with a commondir link"
 rm -rf "$work/linked"
 guard_main
 
@@ -283,18 +329,18 @@ guard_main
 # main clone's .git. One that names another repo's does not.
 git -C "$repo" worktree add -q "$repo/.claude/worktrees/new"
 new=$work/Main-Clone/.git/worktrees/new
-pointers "" "with a worktree made during the session"
+expect_pointers "" "with a worktree made during the session"
 printf '%s\n' "$work/evil/.git" >"$new/commondir"
-pointers "$repo/.claude/worktrees/new/.git" "with a worktree's commondir naming another repo"
+expect_pointers "$repo/.claude/worktrees/new/.git" "with a worktree's commondir naming another repo"
 printf '../..\n' >"$new/commondir"
 
 # With extensions.worktreeConfig on, its config.worktree did not mount, so it
 # passes only while empty.
 git -C "$repo" config extensions.worktreeConfig true
 printf '[core]\n\thooksPath = /tmp\n' >"$new/config.worktree"
-pointers "$repo/.claude/worktrees/new/.git" "with a new worktree's config.worktree"
+expect_pointers "$repo/.claude/worktrees/new/.git" "with a new worktree's config.worktree"
 : >"$new/config.worktree"
-pointers "" "with a new worktree's empty config.worktree"
+expect_pointers "" "with a new worktree's empty config.worktree"
 git -C "$repo" config --unset extensions.worktreeConfig
 git -C "$repo" worktree remove --force "$repo/.claude/worktrees/new"
 
@@ -309,9 +355,11 @@ printf '../.git\n' >"$repo/.git/commondir"
 
 # During a session, each one found moves aside, and notify_host hears of it.
 # A directory's HEAD moves aside too, so git does not take it for a bare
-# repo.
+# repo. A submodule's git directory in a moved .git can still be opened, so
+# the next search finds it and moves its HEAD aside.
 guard_main
 git init -q "$repo/vendor/dep"
+git init -q --bare "$repo/vendor/dep/.git/modules/sub"
 git init -q --bare "$repo/bare"
 notify_log=$work/notify.log
 notify_host() { cat; }
@@ -321,8 +369,34 @@ block_git_pointers
 [ -f "$repo/vendor/dep/.git.cc-blocked/HEAD.cc-blocked" ] || fail "the nested .git did not move aside"
 [ -f "$repo/bare/HEAD.cc-blocked" ] || fail "the bare repo's HEAD did not move aside"
 grep -qF "docker/cc blocked $repo/bare/HEAD" "$notify_log" || fail "the notifier heard: $(cat "$notify_log")"
-pointers "" "after moving each one aside"
-rm -rf "$repo/vendor" "$repo/bare"
+sub=$repo/vendor/dep/.git.cc-blocked/modules/sub
+expect_pointers "$sub/HEAD" "after moving each one aside"
+block_git_pointers
+expect_pointers "" "after moving the moved .git's submodule aside"
+
+# A name the container chooses hides nothing.
+git init -q "$repo/x.cc-blocked/dep"
+expect_pointers "$repo/x.cc-blocked/dep/.git" "inside a folder named like a moved one"
+rm -rf "$repo/vendor" "$repo/bare" "$repo/x.cc-blocked"
+
+# A TERM that ends the watcher still runs the last search, names what it
+# moved aside and removes its directory. The watcher has set its traps once
+# it takes the event.
+git init -q "$repo/late"
+notify_dir=$(mktemp -d "$work/notify.XXXXXX")
+printf '{}\n' >"$notify_dir/event.json"
+watch_events 2>"$work/watch.err" &
+watcher=$!
+for _ in $(seq 50); do
+  [ -e "$notify_dir/event.json" ] || break
+  sleep 0.1
+done
+kill -TERM "$watcher"
+wait "$watcher" || true
+[ -d "$repo/late/.git.cc-blocked" ] || fail "after a TERM, the watcher did not move the clone aside"
+grep -qF "  $repo/late/.git" "$work/watch.err" || fail "after a TERM, the watcher printed: $(cat "$work/watch.err")"
+[ ! -d "$notify_dir" ] || fail "after a TERM, the watcher left $notify_dir"
+rm -rf "$repo/late"
 unset -f notify_host
 
 # The port comes from agent-browser.json, and the browser setup names it.
