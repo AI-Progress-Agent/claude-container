@@ -66,14 +66,18 @@ class Watcher:
         signal.signal(signal.SIGTERM, self._stop)
         # The launcher blocked them for the fork.
         signal.pthread_sigmask(signal.SIG_UNBLOCK, WATCHER_SIGNALS)
-        passes = 0
-        while is_alive(self.launcher_pid) and not self._stopping:
-            passes += 1
-            if passes % 10 == 0:
-                self._block()
-            self._hand_events()
-            time.sleep(0.5)
-        self._finish()
+        # An error in a pass must not skip the end of the session, or the
+        # flags stay set.
+        try:
+            passes = 0
+            while is_alive(self.launcher_pid) and not self._stopping:
+                passes += 1
+                if passes % 10 == 0:
+                    self._block()
+                self._hand_events()
+                time.sleep(0.5)
+        finally:
+            self._finish()
 
     def _stop(self, signum: int, frame: FrameType | None) -> None:
         self._stopping = True
@@ -134,7 +138,16 @@ class Watcher:
         except OSError, ValueError:
             return self.scope.repo
         cwd = cast(dict[str, object], data).get("cwd") if isinstance(data, dict) else None
-        return cwd if isinstance(cwd, str) and is_under(cwd, self.scope.repo) else self.scope.repo
+        if not isinstance(cwd, str) or not is_under(cwd, self.scope.repo):
+            return self.scope.repo
+        # The container writes the event. A path the Mac cannot hold, or a
+        # NUL that would end the field early, falls back too.
+        try:
+            if b"\0" in os.fsencode(cwd):
+                return self.scope.repo
+        except UnicodeError:
+            return self.scope.repo
+        return cwd
 
     def _block(self) -> None:
         self.blocked += block_git_pointers(self.scope, self._notify_text)
