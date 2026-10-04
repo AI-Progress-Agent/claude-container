@@ -360,8 +360,8 @@ show it. Commits and pushes still work. A command that writes `.git/config`
 cannot write it inside. Run from a linked worktree, `docker/cc` also mounts
 the main clone's `.git`, writable, because the worktree's commits and
 branches live there. Its `hooks` and `config` mount read-only, in the same
-way. So do the two files that tell git where those are: the worktree's
-`.git` file and the `commondir` file in its git directory.
+way. So do the files that tell git where those are: the worktree's `.git`
+file, and the `commondir` file of each of the clone's worktrees.
 
 So a branch you create inside has no upstream, the remote branch it tracks.
 Git records an upstream in `.git/config`. These commands try to record one:
