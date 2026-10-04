@@ -65,7 +65,9 @@ services:
       # entry such as core.fsmonitor written here would run on the Mac at
       # its next git command, and git status would not show it. Commits and
       # pushes still work. Anything that writes the config, such as setting
-      # a branch's upstream, fails inside: do that on the host.
+      # a branch's upstream, fails inside. The launcher also flags the
+      # config immutable on the host for the session, so do that on the host
+      # after the session ends.
       - ${REPO_GIT}/hooks:${REPO_GIT}/hooks:ro
       - ${REPO_GIT}/config:${REPO_GIT}/config:ro
 
