@@ -417,20 +417,26 @@ expect_hooks_refused() {
 # The repo's root, a folder that holds it, and a link each stop the start.
 # So does a folder that sits below a link: the container could point the
 # link elsewhere. So does a .. out of a missing folder: the container could
-# make it a link.
+# make it a link. A folder that holds .git/hooks, a path through a file and
+# links that loop stop it too.
 mkdir -p "$work/real-hooks"
 ln -s "$work/real-hooks" "$repo/hooks-link"
 ln -s "$work" "$repo/up-link"
+ln -s "$work/loop" "$work/loop"
+: >"$repo/a-file"
 expect_hooks_refused .
 expect_hooks_refused ..
 expect_hooks_refused hooks-link
 expect_hooks_refused up-link/real-hooks
 expect_hooks_refused missing/../.husky/_
+expect_hooks_refused .git
+expect_hooks_refused a-file/hooks
+expect_hooks_refused "$work/loop/hooks"
 if [ -d "$upper" ]; then
   expect_hooks_refused "$upper/hooks-link"
 fi
 git -C "$repo" config --unset core.hooksPath
-rm -f "$repo/hooks-link" "$repo/up-link"
+rm -f "$repo/hooks-link" "$repo/up-link" "$work/loop" "$repo/a-file"
 rm -rf "$repo/.husky" "$repo/.claude/worktrees/agent/.husky" "$repo/.worktrees/other/.husky" \
   "$repo/.githooks" "$repo/.claude/worktrees/agent/.githooks" "$repo/.worktrees/other/.githooks" \
   "$repo/lib/.githooks" "$repo/.tilde-hooks"
