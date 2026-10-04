@@ -943,9 +943,15 @@ EOF
   done < <(find_git_pointers)
 }
 
-# Prints $1 with each backslash and double quote escaped for a JSON string.
+# Prints $1 escaped for a JSON string. A path can hold a tab or a newline,
+# and JSON takes neither as it is.
 json_escape() {
-  printf '%s' "$1" | sed 's/[\\"]/\\&/g'
+  local s=${1//\\/\\\\}
+  s=${s//\"/\\\"}
+  s=${s//$'\t'/\\t}
+  s=${s//$'\n'/\\n}
+  s=${s//$'\r'/\\r}
+  printf '%s' "$s"
 }
 
 # The tests in the kit's test/ source this file, so main runs only when the

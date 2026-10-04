@@ -372,6 +372,9 @@ block_git_pointers
 [ -f "$repo/vendor/dep/.git.cc-blocked/HEAD.cc-blocked" ] || fail "the nested .git did not move aside"
 [ -f "$repo/bare/HEAD.cc-blocked" ] || fail "the bare repo's HEAD did not move aside"
 grep -qF "docker/cc blocked $repo/bare/HEAD" "$notify_log" || fail "the notifier heard: $(cat "$notify_log")"
+# The event is JSON, so a tab or newline in a path is escaped.
+[ "$(json_escape $'a\tb"c\\d\ne')" = 'a\tb\"c\\d\ne' ] ||
+  fail "json_escape printed: $(json_escape $'a\tb"c\\d\ne')"
 sub=$repo/vendor/dep/.git.cc-blocked/modules/sub
 expect_pointers "$sub/HEAD" "after moving each one aside"
 block_git_pointers
