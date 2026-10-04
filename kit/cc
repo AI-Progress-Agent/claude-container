@@ -93,7 +93,7 @@ main() {
   mkdir -p "$HOME/.claude/projects/$PROJECT_KEY"
 
   collect_host_mounts
-  collect_worktree_mounts
+  collect_worktree_mounts "$repo"
   collect_sibling_repos
   export_gh_token
   export_timezone
@@ -296,22 +296,44 @@ collect_host_mounts() {
 }
 
 # Adds to mounts, read-only, the files that lead each worktree's git to the
-# hooks and config. A linked worktree's .git file names its git directory,
-# under worktrees/ in REPO_GIT. That directory's commondir file names the
-# main clone's .git. Both sit in writable mounts otherwise. The container
-# could then point git on the Mac at a config of its own, and so get past
-# the read-only mounts in compose.yaml. This covers every worktree of the
-# clone, because REPO_GIT holds the commondir files of them all.
+# hooks and config. $1 is a directory in a clone, by the path the container
+# sees it at. A linked worktree's .git file names its git directory, under
+# worktrees/ in the main clone's .git. That directory's commondir file names
+# the main clone's .git. Both sit in writable mounts otherwise. The container
+# could then point git on the Mac at a config of its own, and so get past the
+# read-only mounts of hooks and config. This covers every worktree of the
+# clone, not only the one docker/cc runs from.
+#
+# Each worktree's .git file mounts even where the worktree does not. Git
+# inside would otherwise take a worktree it cannot see for a deleted one, and
+# git worktree prune, or git gc, would remove its git directory from the
+# Mac's .git.
 collect_worktree_mounts() {
-  local file
-  if [ -f "$repo/.git" ]; then
-    mounts+=(-v "$repo/.git:$repo/.git:ro")
-  fi
-  for file in "$REPO_GIT"/worktrees/*/commondir; do
+  local dir=$1 real common line file
+  common=$(git_common_dir "$dir") || return 0
+  real=$(cd "$dir" && pwd -P)
+  while IFS= read -r line; do
+    file=${line#worktree }/.git
+    if [ "$line" != "${line#worktree }" ] && [ -f "$file" ]; then
+      add_pointer_mount "$file" "$real" "$dir"
+    fi
+  done < <(git -C "$dir" worktree list --porcelain)
+  for file in "$common"/worktrees/*/commondir; do
     if [ -f "$file" ]; then
-      mounts+=(-v "$file:$file:ro")
+      add_pointer_mount "$file" "$real" "$dir"
     fi
   done
+}
+
+# Adds to mounts the file $1, read-only, at the real path git names it by.
+# When $1 sits under $2, the real path of $3, it also mounts at the same place
+# under $3. That is the path the container writes it by when $3 reaches the
+# clone through a symbolic link.
+add_pointer_mount() {
+  mounts+=(-v "$1:$1:ro")
+  if [ "$3" != "$2" ] && [ "${1#"$2"/}" != "$1" ]; then
+    mounts+=(-v "$1:$3/${1#"$2"/}:ro")
+  fi
 }
 
 # Adds to mounts the program's other repos: each directory next to this
@@ -325,7 +347,7 @@ collect_worktree_mounts() {
 # A sibling named in writable_siblings mounts writable instead, with its
 # .git/hooks and .git/config read-only, as compose.yaml mounts this repo's.
 # Git runs commands from both, so a write there from the container would run
-# on the Mac.
+# on the Mac. The files that lead its worktrees to them mount read-only too.
 collect_sibling_repos() {
   local main parent own dir name found=() writable=()
   main=$(main_clone)
@@ -345,6 +367,7 @@ collect_sibling_repos() {
       mounts+=(-v "$dir:$dir"
         -v "$dir/.git/hooks:$dir/.git/hooks:ro"
         -v "$dir/.git/config:$dir/.git/config:ro")
+      collect_worktree_mounts "$dir"
       writable+=("$name")
     else
       mounts+=(-v "$dir:$dir:ro")

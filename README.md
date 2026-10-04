@@ -227,7 +227,8 @@ worktree sits. At start, the launcher names each repo it mounted. A clone
 cannot fetch inside, so it is as current as the Mac's last fetch.
 
 A sibling named in `writable_siblings` mounts writable instead. Its
-`.git/hooks` and `.git/config` still mount read-only, as the repo's do. Use
+`.git/hooks` and `.git/config` still mount read-only, as the repo's do, and
+so do its worktrees' `.git` and `commondir` files. Use
 it for a repo that has no container of its own, so its work happens in this
 repo's sessions. Code written there can run on the Mac too, such as a plugin
 that a Mac session loads. Review it as you would a change to the repo's
@@ -360,8 +361,11 @@ show it. Commits and pushes still work. A command that writes `.git/config`
 cannot write it inside. Run from a linked worktree, `docker/cc` also mounts
 the main clone's `.git`, writable, because the worktree's commits and
 branches live there. Its `hooks` and `config` mount read-only, in the same
-way. So do the files that tell git where those are: the worktree's `.git`
-file, and the `commondir` file of each of the clone's worktrees.
+way. So do the files that tell git where those are: the `.git` file and the
+`commondir` file of each of the clone's worktrees. Every worktree's `.git`
+file mounts, even for a worktree the container cannot see. Otherwise
+`git worktree prune` inside would take that worktree for deleted, and remove
+its records from the Mac's `.git`.
 
 So a branch you create inside has no upstream, the remote branch it tracks.
 Git records an upstream in `.git/config`. These commands try to record one:
