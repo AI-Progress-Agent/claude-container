@@ -418,6 +418,50 @@ mount read-only:
   under `.git/modules`. `git status` in the repo runs git in each submodule.
 - The folder that `core.hooksPath` names. See below.
 
+The Mac's disk ignores letter case. Each file above mounts read-only on its
+own, in a writable folder. So a write inside to `.git/CONFIG`, by a name in
+other letter case, would get past the mount of `.git/config` and replace the
+Mac's file. A rename, such as `mv t .git/CONFIG`, would too. So at start, the
+launcher also sets the Mac's immutable flag, `uchg`, on each file that mounts
+read-only on its own inside a writable mount. That covers each `config`,
+`commondir`, `config.worktree` and worktree `.git` file above that the
+container can reach. Every write, rename, removal and `chmod` of the file
+from inside then fails with "Operation not permitted". Root inside cannot
+clear the flag. A folder, such as `hooks`, needs no flag: a write to
+`.git/HOOKS` lands in the read-only mount. The flag does not guard a file
+made during the session, such as a new worktree's `commondir`. The search
+described below covers those.
+
+While the session runs, git on the Mac cannot write a flagged file either.
+These commands fail on the Mac with "Operation not permitted":
+
+- `git config`
+- `git push -u`
+- `git branch --set-upstream-to`
+- `git remote add`
+- `git worktree remove`
+
+Run them after the session ends. `git status`, `git commit` and `git fetch`
+on the Mac still work.
+
+When the session ends, the launcher clears each flag it set. Two sessions can
+share a file, such as two worktrees of one clone, or two repos with one
+writable sibling. Each launcher records the files it flags, in
+`$TMPDIR/cc-flags`. A flag stays set until the last session that holds it
+ends. A crash that ends the launcher's watcher too, such as the Mac losing
+power, leaves its flags set. The next session that guards the same file
+clears it at its end. Or clear one yourself with `chflags nouchg <file>`.
+
+`chflags` fails on a disk that is not the Mac's own, such as an exFAT drive
+or a network share, and on a file another user owns. Then the launcher
+clears the flags it set, names each file, and does not start:
+
+```text
+docker/cc: these could not be flagged read-only on the Mac, so the container did not start:
+  /path/to/repo/.git/config
+chflags fails on a file another user owns, and on a disk that is not the Mac's own, such as exFAT or a network share.
+```
+
 A repo can set `core.hooksPath` to run hooks from another folder. Husky
 sets it to `.husky/_`. A `.gitignore` in `.husky/_` leaves out every file. So
 `git status` would not show a hook that the container writes there. At start, the
@@ -559,8 +603,10 @@ Inside, name the remote branch in place of the upstream:
   `git rev-list --left-right --count HEAD...origin/<branch>` counts the
   commits on each side.
 
-On the Mac, `git branch --set-upstream-to=origin/<branch> <branch>` records
-the upstream. The container sees it only after `docker/cc` restarts. See
+After the session ends, record the upstream on the Mac with
+`git branch --set-upstream-to=origin/<branch> <branch>`. During the session,
+that command fails on the Mac too, because `.git/config` is flagged. The next
+session sees the upstream. See
 [How the container mirrors the Mac](#how-the-container-mirrors-the-mac).
 
 No setting fixes this inside. Git always writes an upstream to `.git/config`,
