@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 
 import pytest
-from harness import BASE_IMAGE, KIT, Kit
+from harness import BASE_IMAGE, KIT, Container, Kit, Mount
 
 
 def test_project_is_named_after_the_main_clone_in_lower_case(kit: Kit) -> None:
@@ -302,6 +302,22 @@ def test_host_config_mounts_read_only_at_its_own_path(kit: Kit) -> None:
 
 
 # docker/cc.local: your own settings.
+
+
+def test_cc_local_exports_reach_compose_but_not_the_launchers_git(kit: Kit) -> None:
+    """The guards read git as git run from this shell reads it."""
+    repo = kit.main_clone()
+    plain = kit.run(repo)
+    assert plain.returncode == 0, plain.stderr
+    kit.cc_local(repo, "export GIT_DIR=/nowhere\n")
+    run = kit.run(repo)
+    assert run.returncode == 0, run.stderr
+    assert run.container.env["GIT_DIR"] == "/nowhere"
+
+    def mounts(container: Container) -> list[Mount]:
+        return [m for m in container.mounts if m.source != str(container.notify_dir)]
+
+    assert mounts(run.container) == mounts(plain.container)
 
 
 def test_cc_local_exports_and_setup_and_arguments(kit: Kit) -> None:
