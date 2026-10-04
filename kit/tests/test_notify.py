@@ -42,6 +42,20 @@ def test_each_event_reaches_notify_host_in_its_folder(kit: Kit) -> None:
     assert not run.container.notify_dir.exists()
 
 
+def test_an_event_whose_folder_the_mac_cannot_hold_runs_at_the_root(kit: Kit) -> None:
+    """The container writes the event, so the watcher must outlive a bad one."""
+    repo = kit.main_clone()
+    seen = kit.work / "seen"
+    kit.cc_local(repo, f'notify_host() {{ echo "$PWD" >>"{seen}"; }}\n')
+    send_events(kit, f"{repo}/\ud800", f"{repo}/a\0b", str(repo))
+    run = kit.run(repo)
+    assert run.returncode == 0, run.stderr
+    assert seen.read_text().splitlines() == [str(repo)] * 3
+    # The session still ends in full.
+    assert kit.flagged() == []
+    assert not run.container.notify_dir.exists()
+
+
 def test_notifier_output_goes_to_the_log(kit: Kit) -> None:
     repo = kit.clone(kit.src / "app")
     kit.cc_local(repo, "notify_host() { echo notified; echo complaint >&2; }\n")
