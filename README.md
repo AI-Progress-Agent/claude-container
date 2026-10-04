@@ -66,7 +66,7 @@ Three limits apply to `docker/cc.local`:
    release by tag and digest. Each release's notes give the line to copy:
 
    ```dockerfile
-   FROM ghcr.io/ai-progress-agent/claude-container:v1.0.0@sha256:<digest>
+   FROM ghcr.io/ai-progress-agent/claude-container:v2.0.0@sha256:<digest>
    ```
 
    Keep the image name in lower case, as above. The stub looks for that exact
