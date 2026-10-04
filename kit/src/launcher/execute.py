@@ -40,7 +40,10 @@ def execute(plan: RunPlan, compose: list[str], helper: LocalHelper) -> NoReturn:
     # takes this process over, so the ID stays the session's.
     flags = FlagSet(f"{tmp_dir()}/cc-flags", os.getpid(), list(plan.flag_files))
     try:
-        failed = flags.flag()
+        try:
+            failed = flags.flag()
+        except OSError:
+            refuse_mac_write(flags.record)
         if failed:
             flags.clear()
             refuse(

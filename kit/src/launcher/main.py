@@ -16,7 +16,7 @@ from launcher.compose import (
     dev_override_text,
 )
 from launcher.environment import compose_env, gh_token, timezone, tmp_dir
-from launcher.execute import exec_compose, execute
+from launcher.execute import exec_compose, execute, refuse_mac_write
 from launcher.local import LocalError, LocalHelper
 from launcher.output import refuse, say
 from launcher.plan import Host, plan_run
@@ -49,8 +49,11 @@ def main(argv: list[str] | None = None) -> int:
         base = os.environ.get("KIT_BASE_IMAGE")
         if not base:
             refuse("docker/cc: the stub sets KIT_BASE_IMAGE")
-        Path(override).parent.mkdir(parents=True, exist_ok=True)
-        Path(override).write_text(dev_override_text(base))
+        try:
+            Path(override).parent.mkdir(parents=True, exist_ok=True)
+            Path(override).write_text(dev_override_text(base))
+        except OSError:
+            refuse_mac_write(override)
     compose = compose_command(KIT, docker_dir, settings.project_name, override)
 
     program = "claude"

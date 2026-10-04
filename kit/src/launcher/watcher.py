@@ -95,13 +95,7 @@ class Watcher:
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
         while is_alive(self.launcher_pid):
             time.sleep(0.5)
-        stuck = self.flags.clear()
-        if stuck:
-            say(
-                "docker/cc: these stay flagged read-only on the Mac. "
-                "Clear each one with chflags nouchg:",
-                *(f"  {file}" for file in stuck),
-            )
+        self.flags.clear()
         self._block()
         if self.blocked:
             say(
