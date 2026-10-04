@@ -1,5 +1,11 @@
 # The base image needs these files. Everything else stays out of the build
-# context.
+# context. The image's copy of kit/ leaves out the tests and what uv and the
+# Python tools write there, so a repo's stub copies only the launcher.
 *
 !image/
 !kit/
+kit/.venv/
+kit/tests/
+**/__pycache__/
+**/.pytest_cache/
+**/.ruff_cache/

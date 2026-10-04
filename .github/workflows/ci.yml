@@ -1,7 +1,8 @@
-# Checks every change to the kit. One job runs shellcheck and the tests that
-# need no Docker. The other builds the base image and the example repo's
-# layer on it, then smoke-tests what a user sees inside. Both run natively
-# on GitHub's arm64 runner, the one architecture the image supports.
+# Checks every change to the kit. One job runs shellcheck, the Python checks
+# and the tests that need no Docker. The other builds the base image and the
+# example repo's layer on it, then smoke-tests what a user sees inside. Both
+# run natively on GitHub's arm64 runner, the one architecture the image
+# supports.
 #
 # Actions are pinned to a commit hash, and .github/dependabot.yml bumps them.
 # The mise binary is pinned by hand, because mise.toml cannot pin mise itself
@@ -26,7 +27,7 @@ concurrency:
 
 jobs:
   check:
-    name: shellcheck and tests
+    name: shellcheck, Python checks and tests
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 10
     steps:
@@ -36,7 +37,7 @@ jobs:
       - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           version: 2026.9.12
-          install_args: shellcheck
+          install_args: shellcheck uv
       - run: mise run check
 
   build:

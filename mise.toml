@@ -9,10 +9,13 @@ minimum_release_age = "7d"
 
 [tools]
 shellcheck = "0.11"
+# uv runs the Python checks, and installs the Python that
+# kit/.python-version names.
+uv = "0.12"
 
 [tasks.check]
-description = "Run shellcheck and the tests that need no Docker"
-depends = ["check:shell"]
+description = "Run shellcheck, the Python checks and the tests that need no Docker"
+depends = ["check:shell", "check:python"]
 run = [
   "test/siblings.sh",
   "test/marketplaces.sh",
@@ -24,6 +27,19 @@ run = [
 [tasks."check:shell"]
 description = "Run shellcheck over the kit's shell scripts"
 run = "shellcheck -x kit/cc stub/cc image/add-user image/release-before image/cc-forward-notify example/docker/kit.sh test/siblings.sh test/marketplaces.sh test/forward.sh test/kit.sh test/smoke.sh"
+
+# The Python project in kit/: ruff, basedpyright in strict mode, and the
+# pytest tests, which run the launcher through the stub with a fake docker.
+# --frozen fails when uv.lock is out of date, rather than changing it.
+[tasks."check:python"]
+description = "Run ruff, basedpyright and the pytest tests in kit/"
+dir = "{{config_root}}/kit"
+run = [
+  "uv run --frozen ruff format --check",
+  "uv run --frozen ruff check",
+  "uv run --frozen basedpyright",
+  "uv run --frozen pytest",
+]
 
 # Builds the base image as claude-container:dev, the tag KIT_DEV uses. Then
 # builds the example repo's layer on it and checks what a user sees inside.
