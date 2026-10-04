@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 
@@ -20,3 +21,12 @@ def kit(tmp_path: Path, image_kit: Path) -> Kit:
     # On the Mac, the temporary folder sits behind a link, and git prints the
     # real path.
     return Kit(tmp_path.resolve(), image_kit)
+
+
+@pytest.fixture
+def plan_env(kit: Kit, monkeypatch: pytest.MonkeyPatch) -> None:
+    """For a test that calls the planning step: git reads the test's own home, not this machine's config."""
+    for name in list(os.environ):
+        monkeypatch.delenv(name)
+    for name, value in kit.env.items():
+        monkeypatch.setenv(name, value)

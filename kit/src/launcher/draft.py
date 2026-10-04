@@ -68,6 +68,9 @@ class Draft:
     mounts: list[Mount] = field(default_factory=list[Mount])
     # Each git folder of its own that the launcher guards, by its real path.
     guarded_git_dirs: list[str] = field(default_factory=list[str])
+    # The real path of each worktree of those git folders: see
+    # gitdirs.guarded_worktrees.
+    worktrees: list[str] = field(default_factory=list[str])
     # The writable siblings.
     writable_dirs: list[str] = field(default_factory=list[str])
     # What to print before the container starts.
