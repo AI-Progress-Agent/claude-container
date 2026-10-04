@@ -174,7 +174,7 @@ def test_path_a_command_value_names_mounts_read_only(
         ("alias.top", '!cd "$(git rev-parse --show-toplevel)/tools" && ./x'),
         ("alias.web", "!open https://github.com/org/repo"),
         # A cd that surely runs moves what follows.
-        ("alias.sure", "!true; cd /tmp && ./bin/run"),
+        ("alias.sure", "!true; cd /usr && ./bin/run"),
         ("alias.echo", "!echo cd tools"),
         # git runs these as git subcommands, not as programs.
         ("alias.st", "status tools/fsm.sh"),
