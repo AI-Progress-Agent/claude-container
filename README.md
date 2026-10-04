@@ -508,9 +508,15 @@ to its name plus `.cc-blocked`, as it moves a `.git`. See below. The
 worktree keeps working, and git on the Mac finds no hooks to run there. In a
 repo that commits its hooks folder, the hooks then show as deleted in that
 worktree. Git on the Mac can still run a hook in the seconds before the
-launcher moves its folder. The launcher does not move a folder that it would
-refuse at start, such as the worktree's root. Do not point `core.hooksPath`
-at such a folder in an `onbranch` section.
+launcher moves its folder.
+
+The container can make a hooks folder that the launcher could not move
+safely, such as a symbolic link, or a folder that holds a worktree. Then the
+launcher moves aside the first symbolic link on the way, so git on the Mac
+finds no folder. With no link, it moves aside the worktree's `.git` file, so
+git on the Mac no longer takes the folder for a worktree. It never moves a
+`.git` directory. Do not point `core.hooksPath` at a folder that the launcher
+refuses at start, such as the worktree's root, in an `onbranch` section.
 
 The launcher refuses to start when it cannot mount the folder read-only.
 It refuses these folders:
@@ -578,9 +584,9 @@ The launcher does not catch everything:
 
 The launcher refuses to start when the config names a path it cannot mount
 read-only. It refuses the paths it refuses for `core.hooksPath`, and an
-included path that is not a file. It also refuses a word with a `/` that
-names a missing path inside a writable mount, because the container could
-make it. It names the worktree, the key, the value and the path:
+included path that is not a file. It also refuses a missing path inside a
+writable mount that a word with a `/`, or a `cd`, names, because the
+container could make it. It names the worktree, the key, the value and the path:
 
 ```text
 docker/cc: a config value names a path the launcher cannot mount read-only, so the container did not start:

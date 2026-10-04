@@ -43,7 +43,7 @@ from launcher import git
 from launcher.draft import Draft, Refused
 from launcher.gitdirs import guarded_worktrees
 from launcher.output import refusal
-from launcher.paths import absolute_path, is_under_any
+from launcher.paths import absolute_path, first_link, nearest_is_dir, outermost
 from launcher.pointers import PointerScope, blocked_event, move_aside
 from launcher.reach import Place, Reach
 
@@ -61,7 +61,7 @@ def collect_hooks_paths(draft: Draft) -> None:
         place = None if folder is None else reach.place(folder, [worktree])
         if folder is not None and place is None:
             continue
-        if place is None or place.root is None or not nearest_is_dir(place.path):
+        if place is None or place.mount is None or not nearest_is_dir(place.path):
             refused.append(f"{worktree}: core.hooksPath = {value}")
             continue
         hook_dirs.append(place)
@@ -74,23 +74,28 @@ def collect_hooks_paths(draft: Draft) -> None:
                 "with no symbolic link or .. on the way. Or unset it.",
             )
         )
-    # Sorted, a folder comes before each folder inside it, which then needs
-    # nothing new. So the order of the worktrees does not matter.
-    mounted: list[str] = []
-    for place in sorted(hook_dirs, key=lambda p: f"{p.path}\t{p.root}"):
-        if is_under_any(place.path, mounted):
-            continue
-        mounted.append(place.path)
-        draft.make_dir(place.path)
-        reach.guard(draft, place)
+    # A folder inside another needs nothing new. So the order of the
+    # worktrees does not matter.
+    places = {place.path: place for place in hook_dirs}
+    for folder in outermost(places):
+        draft.make_dir(folder)
+        reach.guard(draft, places[folder])
 
 
 def block_hooks_folders(scope: PointerScope, notify: Callable[[str], None]) -> list[str]:
     """Moves aside each hooks folder inside a writable mount that has no read-only mount.
 
     The worktrees are those of each guarded git folder now, not at start. A
-    folder may not hold any of them. Each move goes to notify, as
-    block_git_pointers sends it. Returns each moved folder.
+    folder may not hold any of them.
+
+    The container can make a folder that the launcher cannot guard, such as
+    a link, or a folder that holds a worktree. Then the first link on the
+    way moves aside, so git on the Mac finds no folder. With no link, the
+    worktree's .git file moves aside, so git on the Mac no longer takes the
+    folder for a worktree. A .git folder never moves.
+
+    Each move goes to notify, as block_git_pointers sends it. Returns each
+    moved path.
     """
     worktrees = guarded_worktrees(list(scope.guarded_git_dirs))
     blocked: list[str] = []
@@ -98,12 +103,18 @@ def block_hooks_folders(scope: PointerScope, notify: Callable[[str], None]) -> l
         if not git.git("-C", worktree, "config", "core.hooksPath"):
             continue
         folder = hooks_folder(worktree)
-        place = None if folder is None else scope.reach.place(folder, worktrees)
-        if place is None or place.root is None or not os.path.isdir(place.path):
+        if folder is None:
             continue
-        if move_aside(place.path) is not None:
-            blocked.append(place.path)
-            notify(blocked_event(scope.repo, place.path))
+        place = scope.reach.place(folder, worktrees)
+        if place is None:
+            continue
+        if place.mount is not None:
+            path = place.path if os.path.isdir(place.path) else None
+        else:
+            path = first_link(folder, scope.reach.real_roots) or _git_file(worktree)
+        if path is not None and move_aside(path) is not None:
+            blocked.append(path)
+            notify(blocked_event(scope.repo, path))
     return blocked
 
 
@@ -118,8 +129,7 @@ def hooks_folder(worktree: str) -> str | None:
     return absolute_path(value, worktree)
 
 
-def nearest_is_dir(path: str) -> bool:
-    """Whether the deepest part of path that exists is a folder."""
-    while not os.path.lexists(path):
-        path = os.path.dirname(path)
-    return os.path.isdir(path)
+def _git_file(worktree: str) -> str | None:
+    """The worktree's .git when it is a file, not a link nor a folder."""
+    path = f"{worktree}/.git"
+    return path if os.path.isfile(path) and not os.path.islink(path) else None
