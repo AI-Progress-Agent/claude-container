@@ -6,7 +6,7 @@ set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 work=$(mktemp -d "${TMPDIR:-/tmp}/cc-kit-test.XXXXXX")
-trap 'chmod -R u+w "$work"; rm -rf "$work"' EXIT
+trap 'chmod -R u+w "$work" 2>/dev/null || true; rm -rf "$work"' EXIT
 # On macOS TMPDIR is a link, and git prints the resolved path.
 work=$(cd "$work" && pwd -P)
 
@@ -222,9 +222,9 @@ is_one_of "$file:$file:ro" "${mounts[@]}" || fail "the submodule's worktree comm
 git -C "$work/Main-Clone/lib" worktree remove "$work/lib-wt"
 
 # A file or folder the launcher cannot make on the Mac, as on a read-only
-# disk, stops the start. The launcher names it and the disk. A folder with no
-# write permission fails the same way, and root ignores the permission, so
-# the check skips under root.
+# disk, stops the start. The refusal names it and says a read-only disk can
+# cause it. A folder with no write permission fails the same way. Root
+# ignores the permission, so the test skips this check under root.
 if [ "$(id -u)" -ne 0 ]; then
   git init -q "$work/Ro"
   chmod a-w "$work/Ro/.git"
@@ -238,6 +238,7 @@ if [ "$(id -u)" -ne 0 ]; then
   chmod a-w "$work/Ro/.git"
   err=$( (guard_clone "$work/Ro") 2>&1) && fail "started with a hooks folder it could not make"
   case $err in *"did not start"*"  $work/Ro/.git/hooks"*"read-only disk"*) ;; *) fail "refusal was: $err" ;; esac
+  case $err in *"line "[0-9]*) fail "the refusal held a bash error: $err" ;; esac
   chmod u+w "$work/Ro/.git"
   rm -rf "$work/Ro"
 fi
