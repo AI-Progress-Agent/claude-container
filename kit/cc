@@ -62,6 +62,9 @@ dev_image=claude-container:dev
 flags_dir=${TMPDIR:-/tmp}/cc-flags
 # The files this launcher flags. flag_guarded_files sets it.
 flagged_files=()
+# The process the watcher waits on. compose takes it over through exec. The
+# tests point it at a stand-in.
+launcher_pid=$$
 
 main() {
   : "${KIT_DOCKER_DIR:?run docker/cc in a repo, not the launcher itself}"
@@ -1291,7 +1294,7 @@ watch_events() {
   # A hangup or TERM that reaches the loop still runs finish_watch.
   trap finish_watch EXIT
   trap exit HUP TERM
-  while kill -0 $$ 2>/dev/null; do
+  while kill -0 "$launcher_pid" 2>/dev/null; do
     pass=$((pass + 1))
     if [ $((pass % 10)) -eq 0 ]; then
       block_git_pointers
@@ -1320,17 +1323,22 @@ watch_events() {
   done
 }
 
-# Runs the last block_git_pointers of the session, then names each path it
-# moved aside during the session, clears the flags, and removes notify_dir.
-# watch_events runs it on exit, so it also runs when a hangup or TERM ends
-# the loop.
+# Waits for compose to end, clears the flags, and runs the last
+# block_git_pointers of the session. Then names each path it moved aside
+# during the session, and removes notify_dir. watch_events runs it on exit,
+# so it also runs when a hangup or TERM ends the loop. A hangup, such as a
+# closed terminal, can reach the loop before compose ends. The wait keeps
+# each flag set while the container can still write.
 finish_watch() {
+  while kill -0 "$launcher_pid" 2>/dev/null; do
+    sleep 0.5
+  done
+  clear_flags
   block_git_pointers
   if [ ${#blocked[@]} -gt 0 ]; then
     echo "docker/cc: moved aside to .cc-blocked, since each could lead git on the Mac to hooks or a config written inside:" >&2
     printf '  %s\n' "${blocked[@]}" >&2
   fi
-  clear_flags
   rm -rf "$notify_dir"
 }
 

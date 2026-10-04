@@ -783,12 +783,16 @@ flag_refused=
 : >"$flag_state"
 
 # A TERM that ends the watcher still runs the last search, names what it
-# moved aside, clears the flags and removes its directory. The watcher has
-# set its traps once it takes the event.
+# moved aside, clears the flags and removes its directory. It first waits
+# for compose, here a stand-in, to end, so the flags stay set while the
+# container can still write. The watcher has set its traps once it takes
+# the event.
 git init -q "$repo/late"
 flag_guarded_files
 notify_dir=$(mktemp -d "$work/notify.XXXXXX")
 printf '{}\n' >"$notify_dir/event.json"
+sleep 300 >/dev/null 2>&1 &
+launcher_pid=$!
 watch_events 2>"$work/watch.err" &
 watcher=$!
 for _ in $(seq 50); do
@@ -796,6 +800,11 @@ for _ in $(seq 50); do
   sleep 0.1
 done
 kill -TERM "$watcher"
+sleep 1
+[ -n "$(flagged)" ] || fail "after a TERM, the watcher cleared the flags before compose ended"
+kill "$launcher_pid"
+wait "$launcher_pid" 2>/dev/null || true
+launcher_pid=$$
 wait "$watcher" || true
 [ -d "$repo/late/.git.cc-blocked" ] || fail "after a TERM, the watcher did not move the clone aside"
 grep -qF "  $repo/late/.git" "$work/watch.err" || fail "after a TERM, the watcher printed: $(cat "$work/watch.err")"
