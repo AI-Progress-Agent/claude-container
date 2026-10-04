@@ -289,20 +289,23 @@ collect_host_mounts() {
   done
 }
 
-# Adds to mounts, from a linked worktree, the two files that lead git to the
-# hooks and config. The worktree's .git file names its git directory, and
-# that directory's commondir file names the main clone's .git. Both are
-# writable otherwise. The container could then point git on the Mac at a
-# config of its own, and so get past the read-only mounts in compose.yaml.
-# The main clone has neither file, and a submodule has no commondir.
+# Adds to mounts, read-only, the files that lead each worktree's git to the
+# hooks and config. A linked worktree's .git file names its git directory,
+# under worktrees/ in REPO_GIT. That directory's commondir file names the
+# main clone's .git. Both sit in writable mounts otherwise. The container
+# could then point git on the Mac at a config of its own, and so get past
+# the read-only mounts in compose.yaml. This covers every worktree of the
+# clone, because REPO_GIT holds the commondir files of them all.
 collect_worktree_mounts() {
-  [ -f "$repo/.git" ] || return 0
-  local git_dir
-  git_dir=$(git -C "$repo" rev-parse --path-format=absolute --git-dir 2>/dev/null) || return 0
-  mounts+=(-v "$repo/.git:$repo/.git:ro")
-  if [ -f "$git_dir/commondir" ]; then
-    mounts+=(-v "$git_dir/commondir:$git_dir/commondir:ro")
+  local file
+  if [ -f "$repo/.git" ]; then
+    mounts+=(-v "$repo/.git:$repo/.git:ro")
   fi
+  for file in "$REPO_GIT"/worktrees/*/commondir; do
+    if [ -f "$file" ]; then
+      mounts+=(-v "$file:$file:ro")
+    fi
+  done
 }
 
 # Adds to mounts the program's other repos: each directory next to this

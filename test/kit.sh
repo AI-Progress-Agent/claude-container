@@ -125,19 +125,29 @@ for pair in "$work/Main-Clone:$work/Main-Clone/.git" \
   [ "$REPO_GIT" = "${pair#*:}" ] || fail "from $repo, REPO_GIT was $REPO_GIT"
 done
 
-# A worktree's .git file and its commondir file tell git where to find the
-# hooks and config. Both mount read-only, so the container cannot point git
-# on the Mac at a config of its own. The main clone has neither file.
+# A worktree's .git file and the commondir file in its git directory tell git
+# where to find the hooks and config. They mount read-only, so the container
+# cannot point git on the Mac at a config of its own. That holds for every
+# worktree of the clone, not only the one docker/cc runs from.
+git -C "$work/Main-Clone" worktree add -q "$work/Main-Clone/.worktrees/other"
+commondirs="-v $work/Main-Clone/.git/worktrees/agent/commondir:$work/Main-Clone/.git/worktrees/agent/commondir:ro \
+-v $work/Main-Clone/.git/worktrees/other/commondir:$work/Main-Clone/.git/worktrees/other/commondir:ro"
 use_repo "$work/Main-Clone/.claude/worktrees/agent"
+export_compose_env
 mounts=()
 collect_worktree_mounts
-wt_git=$work/Main-Clone/.git/worktrees/agent
-[ "${mounts[*]}" = "-v $repo/.git:$repo/.git:ro -v $wt_git/commondir:$wt_git/commondir:ro" ] ||
+[ "${mounts[*]}" = "-v $repo/.git:$repo/.git:ro $commondirs" ] ||
   fail "from a worktree, mounts were: ${mounts[*]:-none}"
 use_repo "$work/Main-Clone"
+export_compose_env
 mounts=()
 collect_worktree_mounts
-[ ${#mounts[@]} -eq 0 ] || fail "from the main clone, mounts were: ${mounts[*]}"
+[ "${mounts[*]}" = "$commondirs" ] || fail "from the main clone, mounts were: ${mounts[*]:-none}"
+use_repo "$work/My.App"
+export_compose_env
+mounts=()
+collect_worktree_mounts
+[ ${#mounts[@]} -eq 0 ] || fail "outside git, mounts were: ${mounts[*]}"
 
 # The port comes from agent-browser.json, and the browser setup names it.
 use_repo "$work/Main-Clone"
