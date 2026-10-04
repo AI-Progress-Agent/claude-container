@@ -224,8 +224,17 @@ mount_repo() {
   mounts=()
   guarded_git_dirs=()
   writable_dirs=()
+  nested_clones=()
   collect_worktree_mounts "$repo"
 }
+# Stands in for docker compose config. The claude service bind-mounts each
+# path in compose_binds.
+compose_binds=()
+fake_compose() {
+  jq -n '{services: {claude: {volumes: ($ARGS.positional | map({type: "bind", target: .}))}}}' \
+    --args ${compose_binds[@]+"${compose_binds[@]}"}
+}
+compose=(fake_compose)
 # Runs collect_folder_mounts, and prints each folder it mounts, relative to
 # $work, sorted, on one line.
 added_folders() {
@@ -237,15 +246,26 @@ added_folders() {
 }
 
 # Each folder above a read-only mount inside a writable mount mounts on its
-# own, writable, so the container cannot rename it and move the mount away.
+# own, writable. Then the container cannot rename it and move the mount away.
 # The writable mounts are the repo and the main clone's .git. The repo's own
 # .git is already a mount point, so it needs nothing new.
 mount_repo "$work/Main-Clone"
-want="Main-Clone/.claude Main-Clone/.claude/worktrees Main-Clone/.claude/worktrees/agent \
+main_folders="Main-Clone/.claude Main-Clone/.claude/worktrees Main-Clone/.claude/worktrees/agent \
 Main-Clone/.git/modules Main-Clone/.git/modules/lib Main-Clone/.git/worktrees \
 Main-Clone/.git/worktrees/agent Main-Clone/.git/worktrees/other Main-Clone/.worktrees \
 Main-Clone/.worktrees/other"
-[ "$(added_folders)" = "$want" ] || fail "from the main clone, folder mounts were: $(added_folders)"
+[ "$(added_folders)" = "$main_folders" ] || fail "from the main clone, folder mounts were: $(added_folders)"
+
+# A folder that a compose file mounts is already a mount point. A second
+# mount there would hide the compose file's.
+mount_repo "$work/Main-Clone"
+compose_binds=("$work/Main-Clone/.worktrees")
+want="Main-Clone/.claude Main-Clone/.claude/worktrees Main-Clone/.claude/worktrees/agent \
+Main-Clone/.git/modules Main-Clone/.git/modules/lib Main-Clone/.git/worktrees \
+Main-Clone/.git/worktrees/agent Main-Clone/.git/worktrees/other Main-Clone/.worktrees/other"
+[ "$(added_folders)" = "$want" ] ||
+  fail "with a compose file mounting .worktrees, folder mounts were: $(added_folders)"
+compose_binds=()
 
 # From a worktree, the main clone's folders hold no writable mount, except
 # its .git.
@@ -270,9 +290,9 @@ git -C "$work/Sib" remote add origin git@github.com:program-org/sib.git
 git -C "$work/Main-Clone" remote add origin git@github.com:program-org/main-clone.git
 writable_siblings=(Sib)
 mount_repo "$work/Main-Clone"
-mounts=()
 collect_sibling_repos 2>/dev/null
-[ "$(added_folders)" = Sib/.git ] || fail "with a writable sibling, folder mounts were: $(added_folders)"
+[ "$(added_folders)" = "$main_folders Sib/.git" ] ||
+  fail "with a writable sibling, folder mounts were: $(added_folders)"
 writable_siblings=()
 git -C "$work/Main-Clone" remote remove origin
 rm -rf "$work/Sib"
@@ -280,12 +300,7 @@ rm -rf "$work/Sib"
 # The pointer checks. guard_main sets the mounts for the main clone afresh,
 # as a start does.
 guard_main() {
-  use_repo "$work/Main-Clone"
-  mounts=()
-  guarded_git_dirs=()
-  writable_dirs=()
-  nested_clones=()
-  collect_worktree_mounts "$repo"
+  mount_repo "$work/Main-Clone"
 }
 # Fails unless find_git_pointers prints exactly the lines in $1.
 expect_pointers() {
@@ -305,16 +320,11 @@ expect_pointers "" "from the main clone"
 # each file also mounts there. Only a disk that ignores case, such as the
 # Mac's, can check this.
 if [ -d "$work/main-clone" ]; then
-  use_repo "$work/main-clone"
-  mounts=()
-  guarded_git_dirs=()
-  collect_worktree_mounts "$repo"
+  mount_repo "$work/main-clone"
   expect_pointers "" "from the main clone by a path in lower case"
   is_one_of "$main_dir:$repo/.git/commondir:ro" "${mounts[@]}" ||
     fail "by a path in lower case, mounts were: ${mounts[*]:-none}"
   # Each folder above it mounts at that path too.
-  export_compose_env
-  writable_dirs=()
   collect_folder_mounts
   is_one_of "$repo/.git/worktrees:$repo/.git/worktrees" "${mounts[@]}" ||
     fail "by a path in lower case, folder mounts were: ${mounts[*]:-none}"
@@ -333,11 +343,8 @@ for file in "$dep/hooks" "$dep/config" "$dep/commondir"; do
   is_one_of "$file:$file:ro" "${mounts[@]}" || fail "$file did not mount read-only"
 done
 # Each folder from the repo's root down to the clone's .git mounts on its own.
-export_compose_env
-collect_folder_mounts
-for dir in "$repo/vendor" "$repo/vendor/dep" "$dep"; do
-  is_one_of "$dir:$dir" "${mounts[@]}" || fail "$dir did not mount on its own"
-done
+[ "$(added_folders)" = "$main_folders Main-Clone/vendor Main-Clone/vendor/dep Main-Clone/vendor/dep/.git" ] ||
+  fail "with a nested clone, folder mounts were: $(added_folders)"
 rm -rf "$repo/vendor"
 
 # A .git file that names another repo's git directory.
