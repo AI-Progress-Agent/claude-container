@@ -421,16 +421,17 @@ mount read-only:
 The Mac's disk ignores letter case. Each file above mounts read-only on its
 own, in a writable folder. So a write inside to `.git/CONFIG`, by a name in
 other letter case, would get past the mount of `.git/config` and replace the
-Mac's file. A rename, such as `mv t .git/CONFIG`, would too. So at start, the
-launcher also sets the Mac's immutable flag, `uchg`, on each file that mounts
-read-only on its own inside a writable mount. That covers each `config`,
-`commondir`, `config.worktree` and worktree `.git` file above that the
-container can reach. Every write, rename, removal and `chmod` of the file
-from inside then fails with "Operation not permitted". Root inside cannot
-clear the flag. A folder, such as `hooks`, needs no flag: a write to
-`.git/HOOKS` lands in the read-only mount. The flag does not guard a file
-made during the session, such as a new worktree's `commondir`. The search
-described below covers those.
+Mac's file. A rename, such as `mv t .git/CONFIG`, would too.
+
+To stop that, at start the launcher sets the Mac's immutable flag, `uchg`, on
+each file that mounts read-only on its own inside a writable mount. That
+covers each `config`, `commondir`, `config.worktree` and worktree `.git` file
+above that the container can reach. Every write, rename, removal and `chmod`
+of the file from inside then fails with "Operation not permitted". Root
+inside cannot clear the flag. A folder, such as `hooks`, needs no flag: a
+write to `.git/HOOKS` lands in the read-only mount. The flag does not guard a
+file made during the session, such as a new worktree's `commondir`. The
+search described below covers those.
 
 While the session runs, git on the Mac cannot write a flagged file either.
 These commands fail on the Mac with "Operation not permitted":
@@ -442,10 +443,11 @@ These commands fail on the Mac with "Operation not permitted":
 - `git worktree remove`
 
 Run them after the session ends. `git status` and `git commit` on the Mac
-still work. `git worktree remove` deletes the worktree's files before it
-fails on its flagged `.git` file. Without `--force`, it refuses a worktree
-with uncommitted changes, so nothing is lost: `git restore .` in the
-worktree brings the files back.
+still work. `git worktree remove` deletes some of the worktree's files
+before it fails on its flagged `.git` file. Which ones depends on the order
+it reads the folder. Without `--force`, it refuses a worktree with
+uncommitted changes, so `git restore .` in the worktree brings back the
+tracked files. An ignored file, such as `.env`, can be lost.
 
 When the session ends, the launcher clears each flag it set. Two sessions can
 share a file, such as two worktrees of one clone, or two repos with one
@@ -454,9 +456,12 @@ writable sibling. Each launcher records the files it flags, in
 ends. A crash that ends the launcher's watcher too, such as the Mac losing
 power, leaves its flags set. The next session that guards the same file
 clears it at its end. Or clear one yourself with `chflags nouchg <file>`.
+The opposite can happen too. A `kill -9` of `docker/cc` can leave its
+container running. The watcher then clears the flags while that container
+can still write.
 
-`chflags` fails on a read-only disk, and on a file another user owns. An
-exFAT or FAT32 drive takes the flag. When `chflags` fails, the launcher
+`chflags` fails on a read-only disk, and on a file another user owns. It
+works on an exFAT or FAT32 drive. When `chflags` fails, the launcher
 clears the flags it set, names each file, and does not start:
 
 ```text
