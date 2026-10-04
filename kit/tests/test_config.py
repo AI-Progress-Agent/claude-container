@@ -34,7 +34,7 @@ def test_defaults_run_nothing_before_claude(kit: Kit) -> None:
     inside = kit.start_container(run.container)
     assert inside.returncode == 0, inside.stderr
     assert inside.links == []
-    assert inside.cdp == "unset"
+    assert inside.cdp is None
 
 
 def test_arguments_reach_claude_unchanged(kit: Kit) -> None:
@@ -99,7 +99,7 @@ def test_settings_override_every_default(kit: Kit) -> None:
     assert run.container.has_mount(kit.src / "plugins", ro=False)
     inside = kit.start_container(run.container)
     assert (kit.work / "inside/start.log").read_text() == "one\ntwo\n"
-    assert inside.cdp == "unset"
+    assert inside.cdp is None
 
 
 def test_environment_for_compose(kit: Kit) -> None:
@@ -221,7 +221,7 @@ def test_agent_browser_json_with_no_port_warns_and_starts(kit: Kit) -> None:
         "docker/cc: agent-browser.json names no cdp port, so agent-browser drives nothing on the Mac"
         in run.lines()
     )
-    assert kit.start_container(run.container).cdp == "unset"
+    assert kit.start_container(run.container).cdp is None
 
 
 def test_settings_set_the_agent_browser_port(kit: Kit) -> None:
@@ -238,7 +238,7 @@ def test_unresolved_mac_warns_inside_and_starts_claude(kit: Kit) -> None:
     kit.settings(repo, agent_browser_port=9222)
     inside = kit.start_container(kit.run(repo).container, mac_ip=None)
     assert inside.returncode == 0
-    assert inside.cdp == "unset"
+    assert inside.cdp is None
     assert inside.program == ["claude"]
     assert (
         "docker/cc: host.docker.internal does not resolve, so agent-browser cannot reach the Mac's Chrome"

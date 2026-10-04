@@ -22,6 +22,19 @@ from harness import (
     read_only,
 )
 
+# A file or folder the launcher cannot make on the Mac stops the start. Root
+# ignores the permission, so these skip under root.
+
+needs_non_root = pytest.mark.skipif(os.geteuid() == 0, reason="root ignores the permission")
+
+
+def assert_refused_to_make(stderr: str, path: Path) -> None:
+    assert "did not start" in stderr
+    assert f"\n  {path}\n" in stderr
+    assert "read-only disk" in stderr
+    # No bash error leaks into the refusal.
+    assert " line " not in stderr
+
 
 @pytest.mark.parametrize("where", [".", ".claude/worktrees/agent"])
 def test_every_worktrees_pointer_files_mount_read_only(kit: Kit, where: str) -> None:
@@ -91,12 +104,6 @@ def test_submodules_worktree_commondir_mounts_read_only(kit: Kit) -> None:
     assert run.container.has_mount(file, ro=True)
 
 
-# A file or folder the launcher cannot make on the Mac stops the start. Root
-# ignores the permission, so these skip under root.
-
-needs_non_root = pytest.mark.skipif(os.geteuid() == 0, reason="root ignores the permission")
-
-
 @needs_non_root
 def test_a_commondir_it_cannot_write_stops_the_start(kit: Kit) -> None:
     repo = kit.clone(kit.src / "app")
@@ -125,14 +132,6 @@ def test_a_hooks_folder_it_cannot_make_stops_the_start(kit: Kit) -> None:
     assert run.returncode != 0
     assert_refused_to_make(run.stderr, dep / ".git/hooks")
     assert not run.started
-
-
-def assert_refused_to_make(stderr: str, path: Path) -> None:
-    assert "did not start" in stderr
-    assert f"\n  {path}\n" in stderr
-    assert "read-only disk" in stderr
-    # No bash error leaks into the refusal.
-    assert " line " not in stderr
 
 
 # Each folder above a read-only mount inside a writable mount mounts on its

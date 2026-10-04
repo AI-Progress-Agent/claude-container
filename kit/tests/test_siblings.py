@@ -27,6 +27,7 @@ def this(kit: Kit) -> Path:
         ("other-client", "git@github.com:other-client/app.git"),
         ("other-host", "https://gitlab.com/Program-Org/app.git"),
         ("no-origin", None),
+        ("no-origin-sibling", None),
         ("rw-other-client", "git@github.com:other-client/rw-other-client.git"),
     ):
         kit.clone(src / name, origin, commit=False)
@@ -48,7 +49,8 @@ def writable(kit: Kit, where: Path, nested_clones: list[str] | None = None) -> N
 
 @pytest.mark.parametrize("where", [".", ".worktrees/wt", ".claude/worktrees/agent"])
 def test_only_clones_with_this_origins_owner_mount(kit: Kit, this: Path, where: str) -> None:
-    # The settings are committed, so each worktree has them.
+    # A repo commits docker/kit.sh, so each worktree has it. Here it goes
+    # where the run starts.
     writable(kit, this / where)
     run = kit.run(this / where)
     assert run.returncode == 0, run.stderr
