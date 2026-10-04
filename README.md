@@ -417,6 +417,27 @@ mount read-only:
 - The `hooks`, `config` and `commondir` of each submodule's git directory,
   under `.git/modules`. `git status` in the repo runs git in each submodule.
 
+Linux lets the container rename a folder that holds a read-only mount, and
+the mount moves with it. The container could then make a new folder at the
+old path, with hooks or a config of its own, and git on the Mac would read
+them. Linux refuses to rename a folder that is a mount point. So each folder
+above a read-only file, up to the root of the writable mount it sits in, also
+mounts on its own. It mounts writable, at its own path. These folders are:
+
+- `.git/modules` and `.git/modules/<name>`, for each submodule
+- `.git/worktrees` and `.git/worktrees/<name>`, for each worktree
+- each folder that holds a worktree's `.git` file, such as `.worktrees` and
+  `.worktrees/<name>`, or `.claude`, `.claude/worktrees` and
+  `.claude/worktrees/<name>`
+- each folder down to a nested clone's `.git`, such as `vendor`,
+  `vendor/sdk` and `vendor/sdk/.git`
+- a writable sibling's `.git`
+
+The repo's own `.git` is already a mount of its own. Writes inside each
+folder still work. A rename or removal of one of these folders fails inside
+with "Resource busy", in any letter case. So do `git worktree move` and
+`git worktree remove`. Do them on the Mac after the session.
+
 A read-only mount needs a file that exists at start. So these stay writable:
 
 - a `.git` anywhere in the repo, as a directory, a file or a link, with its
