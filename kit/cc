@@ -35,12 +35,12 @@
 #   docker/compose.local.yaml   stacked on compose.repo.yaml: your own mounts
 #                               and environment variables
 #   docker/cc.local             sourced by this script before the container
-#                               starts: export what those variables need, and
-#                               append commands to local_setup to run inside
-#                               before Claude does, and redefine notify_host
-#                               to use your own notifier, and name in
-#                               skip_marketplaces the folder marketplaces to
-#                               keep out
+#                               starts. It exports what those variables need.
+#                               It appends to local_setup the commands to run
+#                               inside before Claude. It can redefine
+#                               notify_host to use your own notifier. It names
+#                               in skip_marketplaces the folder marketplaces
+#                               to keep out.
 #
 # KIT_DEV, set to the path of a claude-container checkout, tries a kit change
 # on a real repo before a release. The stub runs that checkout's launcher,
@@ -180,12 +180,11 @@ export_compose_env() {
 }
 
 # Prints the path of the git directory that holds the repo's hooks and
-# config. In the main clone, that is the repo's own .git. The path keeps the
-# form the repo has here, so the read-only mounts land where git inside
-# looks. A linked worktree's .git is a file. That file points into the main
-# clone's .git, so this prints the main clone's .git. Git prints it by its
-# real path, as the worktree's .git file names it. Outside git, this prints
-# the repo's .git.
+# config. In the main clone or outside git, that is the repo's own .git. It
+# keeps the repo's path here, where git inside looks for it. A linked
+# worktree's .git is a file that points into the main clone's .git, so this
+# prints the main clone's .git. That path has no symbolic links, as the
+# worktree's .git file names it.
 repo_git_dir() {
   local dir
   if [ ! -d "$repo/.git" ] && dir=$(git_common_dir "$repo"); then
@@ -311,9 +310,9 @@ collect_host_mounts() {
 # sees it at. A linked worktree's .git file names its git directory, under
 # worktrees/ in the main clone's .git. That directory's commondir file names
 # the main clone's .git. Both sit in writable mounts otherwise. The container
-# could then point git on the Mac at a config of its own, and so get past the
-# read-only mounts of hooks and config. This covers every worktree of the
-# clone, not only the one docker/cc runs from.
+# could then point git on the Mac at a config of its own. That config would
+# get past the read-only mounts of hooks and config. This covers every
+# worktree of the clone, not only the one docker/cc runs from.
 #
 # Each worktree's .git file mounts even where the worktree does not. Git
 # inside would otherwise take a worktree it cannot see for a deleted one, and
@@ -342,7 +341,7 @@ collect_worktree_mounts() {
 # clone through a symbolic link.
 add_pointer_mount() {
   mounts+=(-v "$1:$1:ro")
-  if [ "$3" != "$2" ] && [ "${1#"$2"/}" != "$1" ]; then
+  if [ "$3" != "$2" ] && is_under_any "$1" "$2"; then
     mounts+=(-v "$1:$3/${1#"$2"/}:ro")
   fi
 }
@@ -371,7 +370,7 @@ collect_sibling_repos() {
     [ "$dir" != "$main" ] && [ -d "$dir/.git" ] || continue
     [ "$(origin_owner "$dir")" = "$own" ] || continue
     name=$(basename "$dir")
-    if is_writable_sibling "$name"; then
+    if is_one_of "$name" ${writable_siblings[@]+"${writable_siblings[@]}"}; then
       # A missing source would become an empty directory the container
       # could fill, so make it here on the Mac first.
       mkdir -p "$dir/.git/hooks"
@@ -393,11 +392,12 @@ collect_sibling_repos() {
   fi
 }
 
-# Succeeds when $1 is named in writable_siblings.
-is_writable_sibling() {
-  local name
-  for name in ${writable_siblings[@]+"${writable_siblings[@]}"}; do
-    [ "$name" = "$1" ] && return 0
+# Succeeds when $1 is one of the other arguments.
+is_one_of() {
+  local name=$1 item
+  shift
+  for item in "$@"; do
+    [ "$item" = "$name" ] && return 0
   done
   return 1
 }
@@ -478,7 +478,7 @@ collect_marketplaces() {
   done
   while IFS=$'\t' read -r name path; do
     [ -n "$name" ] || continue
-    if is_skipped_marketplace "$name"; then
+    if is_one_of "$name" ${skip_marketplaces[@]+"${skip_marketplaces[@]}"}; then
       skipped+=("$name")
       continue
     fi
@@ -504,15 +504,6 @@ collect_marketplaces() {
   if [ ${#skipped[@]} -gt 0 ]; then
     echo "docker/cc: skipped marketplaces: ${skipped[*]}" >&2
   fi
-}
-
-# Succeeds when $1 is named in skip_marketplaces.
-is_skipped_marketplace() {
-  local name
-  for name in ${skip_marketplaces[@]+"${skip_marketplaces[@]}"}; do
-    [ "$name" = "$1" ] && return 0
-  done
-  return 1
 }
 
 # Prints the path inside of the -v argument $1, source:target or

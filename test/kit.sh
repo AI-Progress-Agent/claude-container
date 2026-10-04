@@ -114,18 +114,17 @@ load_repo_config
 # REPO_GIT is the git directory whose hooks and config compose.yaml mounts
 # read-only. From the main clone, it is the clone's .git. A worktree's .git is
 # a file, so from a worktree REPO_GIT is the main clone's .git. A directory
-# inside the clone gets the same, but read-only: git there stops at the
-# repo's mount, so nothing inside needs to write it. Outside git, REPO_GIT is
-# the repo's .git.
+# inside the clone gets the main clone's .git too, but read-only. Git there
+# stops at the repo's mount, so nothing inside needs to write it. Outside
+# git, REPO_GIT is the repo's .git.
 mkdir -p "$work/Main-Clone/sub/docker"
-for case in "$work/Main-Clone:$work/Main-Clone/.git:rw" \
+for repo_and_git in "$work/Main-Clone:$work/Main-Clone/.git:rw" \
   "$work/Main-Clone/.claude/worktrees/agent:$work/Main-Clone/.git:rw" \
   "$work/Main-Clone/sub:$work/Main-Clone/.git:ro" \
   "$work/My.App:$work/My.App/.git:rw"; do
-  use_repo "${case%%:*}"
+  use_repo "${repo_and_git%%:*}"
   export_compose_env
-  want=${case#*:}
-  [ "$REPO_GIT:$REPO_GIT_MODE" = "$want" ] ||
+  [ "$REPO_GIT:$REPO_GIT_MODE" = "${repo_and_git#*:}" ] ||
     fail "from $repo, REPO_GIT was $REPO_GIT:$REPO_GIT_MODE"
 done
 
@@ -166,6 +165,7 @@ collect_worktree_mounts "$work/Link"
 [ "${mounts[*]} " = "$want" ] || fail "through a link, mounts were: ${mounts[*]:-none}"
 rm -f "$work/Link"
 
+
 # The port comes from agent-browser.json, and the browser setup names it.
 use_repo "$work/Main-Clone"
 printf '{\n  "cdp": "10099"\n}\n' >"$repo/agent-browser.json"
@@ -193,7 +193,7 @@ agent_browser_port=
 EOF
 load_repo_config
 [ "$project_name" = other-claude ] || fail "kit.sh project_name was $project_name"
-is_writable_sibling plugins || fail "kit.sh writable_siblings was ${writable_siblings[*]}"
+is_one_of plugins "${writable_siblings[@]}" || fail "kit.sh writable_siblings was ${writable_siblings[*]}"
 [ "$start_commands" = 'pnpm install' ] || fail "kit.sh start_commands was $start_commands"
 [ -z "$agent_browser_port" ] || fail "kit.sh port was $agent_browser_port"
 

@@ -47,11 +47,11 @@ Three limits apply to `docker/cc.local`:
   repos. So it cannot change `project_name` or `writable_siblings`. Set those
   in `docker/kit.sh`.
 - `docker/cc build` and `docker/cc upgrade` do not read it.
-- The launcher sets `HOST_HOME`, `REPO`, `HOST_USER`, `PROJECT_KEY` and
-  `PROJECT_NAME` for Compose before it reads the file. An export of one there
-  reaches Compose, but not what the launcher has already done with it. So
-  `export PROJECT_NAME=x` renames the image but not the volumes. Leave those
-  five alone.
+- The launcher sets `HOST_HOME`, `REPO`, `REPO_GIT`, `REPO_GIT_MODE`,
+  `HOST_USER`, `PROJECT_KEY` and `PROJECT_NAME` for Compose before it reads
+  the file. An export of one there reaches Compose, but not what the launcher
+  has already done with it. So `export PROJECT_NAME=x` renames the image but
+  not the volumes. Leave those seven alone.
 
 ## Set up a repo
 
@@ -224,7 +224,9 @@ The launcher leaves a marketplace out in these cases:
 - `skip_marketplaces` in [`docker/cc.local`](#dockercclocal) names it.
 - Its folder is missing on the Mac.
 - The container already sees its folder: the folder is in the repo, in a
-  sibling repo, or in a mount in `docker/compose.local.yaml`.
+  sibling repo, or in a bind mount in any compose file. Those files are the
+  kit's `compose.yaml`, `docker/compose.repo.yaml` and
+  `docker/compose.local.yaml`.
 
 At start, the launcher prints these lines:
 
@@ -383,15 +385,15 @@ read-only. Git runs commands from both. So a write there from the container
 would run on your Mac at its next `git` command, and `git status` would not
 show it. Commits and pushes still work. A command that writes `.git/config`
 cannot write it inside. Run from a linked worktree, `docker/cc` also mounts
-the main clone's `.git`, writable, because the worktree's commits and
-branches live there. Its `hooks` and `config` mount read-only, in the same
-way. So do the files that tell git where those are: the `.git` file and the
-`commondir` file of each of the clone's worktrees. Every worktree's `.git`
-file mounts, even for a worktree the container cannot see. Otherwise
-`git worktree prune` inside would take that worktree for deleted, and remove
-its records from the Mac's `.git`. When `docker/` sits below the clone's root, the clone's
-`.git` mounts read-only. Git inside stops at the repo's mount and never finds
-it, so nothing inside needs to write it.
+the main clone's `.git`, writable, because the worktree's commits and branches
+live there. Its `hooks` and `config` mount read-only, in the same way. So do
+the files that tell git where those are: the `.git` file and the `commondir`
+file of each of the clone's worktrees. Every worktree's `.git` file mounts,
+even for a worktree the container cannot see. Otherwise `git worktree prune`
+inside would take that worktree for deleted, and remove its records from the
+Mac's `.git`. When `docker/` sits below the clone's root, the clone's `.git`
+mounts read-only. Git inside stops at the repo's mount and never finds it, so
+nothing inside needs to write it.
 
 So a branch you create inside has no upstream, the remote branch it tracks.
 Git records an upstream in `.git/config`. These commands try to record one:
