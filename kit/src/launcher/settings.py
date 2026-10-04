@@ -162,7 +162,7 @@ def _cdp_port(path: str) -> int | None:
 # Sets the bash launcher's defaults, then sources kit.sh inside a function,
 # as that launcher did. Then it prints each setting. A setting is its name,
 # list or text, the count of values, then each value. Each field ends in a
-# NUL byte.
+# NUL byte. What kit.sh prints goes to stderr, so it stays out of the report.
 _KIT_SH_REPORT = r"""
 repo=$1 docker_dir=$2
 load_repo_config() {
@@ -171,7 +171,7 @@ load_repo_config() {
   start_commands=true
   nested_clones=()
   agent_browser_port=$4
-  . "$docker_dir/kit.sh"
+  . "$docker_dir/kit.sh" >&2
 }
 load_repo_config "$@"
 for name in project_name writable_siblings start_commands nested_clones agent_browser_port; do
@@ -182,45 +182,43 @@ for name in project_name writable_siblings start_commands nested_clones agent_br
 done
 """
 
+# Stand-ins for the two defaults that come from the clone. Neither is a value
+# kit.sh would set, so a setting that kit.sh pins to this clone's default
+# still differs from its stand-in.
+_STAND_IN_NAME = "\x01project_name"
+_STAND_IN_PORT = "\x01agent_browser_port"
+
+type _KitShSettings = dict[str, tuple[str, list[str]]]
+
 
 def _kit_sh_refusal(
     repo: str, docker_dir: str, project_name: str, browser_port: int | None
 ) -> SettingsError:
     """The refusal for a repo with docker/kit.sh and no docker/kit.toml.
 
-    It sources kit.sh in bash once, and gives the kit.toml with the same
-    settings. A setting that kit.sh leaves at its default stays out.
+    It sources kit.sh in bash, and gives the kit.toml with the same settings.
+    A setting that kit.sh leaves at its default stays out. A project_name or
+    agent_browser_port that kit.sh sets stays in, even when it matches this
+    clone's default: another clone's default can differ.
     """
     kit_sh = f"{docker_dir}/kit.sh"
     port = "" if browser_port is None else str(browser_port)
-    result = subprocess.run(
-        ["bash", "-c", _KIT_SH_REPORT, "kit.sh", repo, docker_dir, project_name, port],
-        stdin=subprocess.DEVNULL,
-        capture_output=True,
-        check=False,
-    )
-    if result.returncode != 0:
+    try:
+        settings = _source_kit_sh(repo, docker_dir, project_name, port)
+        stand_in = _source_kit_sh(repo, docker_dir, _STAND_IN_NAME, _STAND_IN_PORT)
+    except SettingsError as error:
         return SettingsError(
             f"docker/cc: the launcher reads docker/kit.toml now, not {kit_sh}, "
             "and bash could not source kit.sh to convert it, so the container did not start:\n"
-            + os.fsdecode(result.stderr).rstrip("\n")
+            + error.message
         )
-    defaults: dict[str, tuple[str, list[str]]] = {
-        "project_name": ("text", [project_name]),
-        "writable_siblings": ("list", []),
-        "start_commands": ("text", ["true"]),
-        "nested_clones": ("list", []),
-        "agent_browser_port": ("text", [port]),
-    }
-    fields = [os.fsdecode(f) for f in result.stdout.split(b"\0")]
-    lines: list[str] = []
-    i = 0
-    while i + 2 < len(fields):
-        name, kind, count = fields[i], fields[i + 1], int(fields[i + 2])
-        values = fields[i + 3 : i + 3 + count]
-        i += 3 + count
-        if (kind, values) != defaults.get(name):
-            lines.append(f"{name} = {_toml_value(name, kind, values)}")
+    defaults = _kit_sh_defaults(project_name, port)
+    stand_in_defaults = _kit_sh_defaults(_STAND_IN_NAME, _STAND_IN_PORT)
+    lines = [
+        f"{name} = {_toml_value(name, kind, values)}"
+        for name, (kind, values) in settings.items()
+        if (kind, values) != defaults.get(name) or stand_in.get(name) != stand_in_defaults.get(name)
+    ]
     toml = f"{docker_dir}/kit.toml"
     if not lines:
         return SettingsError(
@@ -233,6 +231,39 @@ def _kit_sh_refusal(
         f"so the container did not start. Save the lines below as {toml}, then delete kit.sh.",
         "".join(f"{line}\n" for line in lines),
     )
+
+
+def _source_kit_sh(repo: str, docker_dir: str, project_name: str, port: str) -> _KitShSettings:
+    """Each setting after kit.sh runs on the given defaults, by name.
+
+    Raises SettingsError with bash's stderr when kit.sh fails.
+    """
+    result = subprocess.run(
+        ["bash", "-c", _KIT_SH_REPORT, "kit.sh", repo, docker_dir, project_name, port],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise SettingsError(os.fsdecode(result.stderr).rstrip("\n"))
+    fields = [os.fsdecode(f) for f in result.stdout.split(b"\0")]
+    settings: _KitShSettings = {}
+    i = 0
+    while i + 2 < len(fields):
+        name, kind, count = fields[i], fields[i + 1], int(fields[i + 2])
+        settings[name] = (kind, fields[i + 3 : i + 3 + count])
+        i += 3 + count
+    return settings
+
+
+def _kit_sh_defaults(project_name: str, port: str) -> _KitShSettings:
+    return {
+        "project_name": ("text", [project_name]),
+        "writable_siblings": ("list", []),
+        "start_commands": ("text", ["true"]),
+        "nested_clones": ("list", []),
+        "agent_browser_port": ("text", [port]),
+    }
 
 
 def _toml_value(name: str, kind: str, values: list[str]) -> str:
