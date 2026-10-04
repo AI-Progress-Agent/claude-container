@@ -1113,8 +1113,8 @@ compose_bind_targets() {
 # finish_watch runs leaves its flags set. So a flag already set at start
 # counts as one that a launcher set.
 #
-# chflags can fail, such as on an exFAT drive, a network share, or a file
-# another user owns. Then the launcher clears the flags it set, names each
+# chflags fails on a read-only disk, and on a file another user owns. Then
+# the launcher clears the flags it set, names each
 # such file, and exits before the container starts. A file it could not
 # flag has no flag of its own to clear.
 flag_guarded_files() {
@@ -1139,8 +1139,8 @@ flag_guarded_files() {
   {
     echo "docker/cc: these could not be flagged read-only on the Mac, so the container did not start:"
     printf '  %s\n' "${failed[@]}"
-    echo "chflags fails on a file another user owns, and on a disk that is not the Mac's own, such as exFAT or a network share."
-    echo "Move the repo to the Mac's own disk, or give the file to your user with chown."
+    echo "chflags fails on a read-only disk, and on a file another user owns."
+    echo "Move the repo to a writable disk, or give each file to your user with chown."
   } >&2
   exit 1
 }

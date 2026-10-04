@@ -612,7 +612,7 @@ rm -rf "$repo/vendor" "$repo/bare" "$repo/x.cc-blocked"
 
 # The flags. A stand-in for chflags keeps each flagged path as a line in
 # $flag_state. It fails to set or clear the flag on the path in
-# $flag_refused, as chflags does on an exFAT drive. Each launcher's
+# $flag_refused, as chflags does on a read-only disk. Each launcher's
 # record goes in a folder of the test's own.
 flag_state=$work/flags
 flag_refused=
