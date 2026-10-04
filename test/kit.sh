@@ -392,6 +392,19 @@ writable_siblings=()
 git -C "$repo" remote remove origin
 rm -rf "$work/Sib"
 
+# The Mac's disk ignores case. A value spelled in another case names the same
+# folder, and mounts as the disk spells it.
+upper=$work/MAIN-CLONE
+if [ -d "$upper" ]; then
+  mount_repo "$work/Main-Clone"
+  mkdir -p "$repo/.husky/_"
+  git -C "$repo" config core.hooksPath "$upper/.HUSKY/_"
+  [ "$(added_hooks)" = "Main-Clone/.husky/_" ] ||
+    fail "with a value in another case, hooks mounts were: $(added_hooks)"
+  git -C "$repo" config --unset core.hooksPath
+  rm -rf "$repo/.husky"
+fi
+
 # Exits unless collect_hooks_paths refuses core.hooksPath = $1 in the repo.
 expect_hooks_refused() {
   local err
@@ -411,6 +424,9 @@ expect_hooks_refused .
 expect_hooks_refused ..
 expect_hooks_refused hooks-link
 expect_hooks_refused up-link/real-hooks
+if [ -d "$upper" ]; then
+  expect_hooks_refused "$upper/hooks-link"
+fi
 git -C "$repo" config --unset core.hooksPath
 rm -f "$repo/hooks-link" "$repo/up-link"
 rm -rf "$repo/.husky" "$repo/.claude/worktrees/agent/.husky" "$repo/.worktrees/other/.husky" \

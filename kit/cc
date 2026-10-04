@@ -755,8 +755,10 @@ absolute_path() {
 }
 
 # Prints the path $1 with each symbolic link in it followed, as the kernel
-# follows them. $1 is absolute. A part of it may be missing. Fails when a
-# link sits at or under one of the other arguments, or when links loop.
+# follows them. Each folder that exists is spelled as on disk, which may
+# differ in case from $1. $1 is absolute. A part of it may be missing. Fails
+# when a link sits at or under one of the other arguments, or when links
+# loop.
 follow_links() {
   local rest=$1 path='' part hops=0
   shift
@@ -778,6 +780,8 @@ follow_links() {
       part=$(readlink "$path/$part")
       case $part in /*) path= ;; esac
       rest=$part/$rest
+    elif [ -d "$path/$part" ]; then
+      path=$(real_dir "$path/$part") || return 1
     else
       path=$path/$part
     fi
