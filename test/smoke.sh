@@ -46,6 +46,12 @@ inside '! touch /usr/local/share/mise/installs/x 2>/dev/null' ||
   fail "the user can write the base image's tools"
 inside 'gh stack --help' >/dev/null || fail "gh stack does not run"
 inside 'agent-browser --version' >/dev/null || fail "agent-browser does not run"
-inside '[ -x /opt/kit/cc ] && [ -f /opt/kit/compose.yaml ]' || fail "the kit is not in /opt/kit"
+inside '[ -x /opt/kit/cc ] && [ -f /opt/kit/compose.yaml ] && [ -f /opt/kit/cc-local.bash ]' ||
+  fail "the kit is not in /opt/kit"
+# The stub copies /opt/kit to the Mac, and uv runs the launcher from there.
+inside '[ -f /opt/kit/src/launcher/main.py ] && [ -f /opt/kit/uv.lock ] && [ -f /opt/kit/.python-version ]' ||
+  fail "the Python launcher or its uv project is not in /opt/kit"
+inside '[ ! -e /opt/kit/tests ] && [ ! -e /opt/kit/.venv ]' ||
+  fail "/opt/kit holds the tests or a virtual environment"
 
 echo "ok"

@@ -16,20 +16,15 @@ uv = "0.12"
 [tasks.check]
 description = "Run shellcheck, the Python checks and the tests that need no Docker"
 depends = ["check:shell", "check:python"]
-run = [
-  "test/siblings.sh",
-  "test/marketplaces.sh",
-  "test/forward.sh",
-  "test/kit.sh",
-]
 
 # Add a new shell script here.
 [tasks."check:shell"]
 description = "Run shellcheck over the kit's shell scripts"
-run = "shellcheck -x kit/cc stub/cc image/add-user image/release-before image/cc-forward-notify example/docker/kit.sh test/siblings.sh test/marketplaces.sh test/forward.sh test/kit.sh test/smoke.sh"
+run = "shellcheck -x kit/cc kit/cc-local.bash stub/cc image/add-user image/release-before image/cc-forward-notify example/docker/kit.sh test/smoke.sh"
 
 # The Python project in kit/: ruff, basedpyright in strict mode, and the
-# pytest tests, which run the launcher through the stub with a fake docker.
+# pytest tests. Most run the launcher through the stub with a fake docker.
+# The rest call the planning step on fixture folders.
 # --frozen fails when uv.lock is out of date, rather than changing it.
 [tasks."check:python"]
 description = "Run ruff, basedpyright and the pytest tests in kit/"
