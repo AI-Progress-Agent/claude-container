@@ -85,7 +85,8 @@ def test_only_folders_the_container_does_not_see_mount(kit: Kit, repo: Path) -> 
         "docker/cc: mounted marketplaces read-only: in-volume legacy mine",
         "docker/cc: skipped marketplaces: client",
     ]
-    assert len(run.compose_calls("config")) == 1
+    [config] = run.compose_calls("config")
+    assert config.argv[-3:] == ["config", "--format", "json"]
 
 
 def test_with_nothing_to_mount_the_compose_files_are_not_read(kit: Kit, repo: Path) -> None:

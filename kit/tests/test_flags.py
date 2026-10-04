@@ -14,7 +14,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from harness import Kit
+from harness import FORWARD, Kit
 
 MAIN_FLAGGED = [
     "Main-Clone/.claude/worktrees/agent/.git",
@@ -191,6 +191,12 @@ def test_a_term_to_the_watcher_waits_for_compose_then_ends_the_session(kit: Kit)
     repo = kit.main_clone()
     after_term = kit.work / "after-term"
     kit.on_run(f"""
+# The watcher has set its traps once it takes an event.
+printf '{{}}' | CC_NOTIFY_DIR="$NOTIFY_DIR" sh '{FORWARD}'
+for _ in $(seq 50); do
+  [ -n "$(ls "$NOTIFY_DIR")" ] || break
+  sleep 0.1
+done
 pgrep -P "$DOCKER_PID" >'{kit.work / "children"}' || true
 while read -r pid; do
   [ "$pid" = $$ ] || kill -TERM "$pid"

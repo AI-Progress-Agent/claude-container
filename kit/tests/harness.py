@@ -191,7 +191,7 @@ printf '%s       STREAM host.docker.internal\\n' "$(cat "$SANDBOX/mac-ip")"
 """
 FAKE_PROGRAM = """#!/bin/bash
 printf '%s\\n' "${0##*/}" "$@" >"$SANDBOX/program.args"
-printf '%s' "${AGENT_BROWSER_CDP-unset}" >"$SANDBOX/cdp"
+if [ -n "${AGENT_BROWSER_CDP+set}" ]; then printf '%s' "$AGENT_BROWSER_CDP" >"$SANDBOX/cdp"; fi
 """
 
 
@@ -268,11 +268,11 @@ class Run:
 
     @property
     def started(self) -> bool:
-        return any(_compose_subcommand(c.argv) == "run" for c in self.calls)
+        return bool(self.compose_calls("run"))
 
     @property
     def container(self) -> Container:
-        runs = [c for c in self.calls if _compose_subcommand(c.argv) == "run"]
+        runs = self.compose_calls("run")
         assert len(runs) == 1, f"compose run calls: {len(runs)}\nstderr:\n{self.stderr}"
         call = runs[0]
         argv = ["docker", *call.argv]
@@ -312,8 +312,8 @@ class Inside:
     links: list[list[str]]
     # $0 and the arguments of the program the setup ran last.
     program: list[str]
-    # AGENT_BROWSER_CDP as the program saw it, or "unset".
-    cdp: str
+    # AGENT_BROWSER_CDP as the program saw it, or None when unset.
+    cdp: str | None
 
 
 class Kit:
@@ -522,7 +522,7 @@ class Kit:
         (sandbox / "bin").mkdir(parents=True)
         for name, text in (("ln", FAKE_LN), ("getent", FAKE_GETENT)):
             self._write_script(sandbox / "bin" / name, text)
-        program = container.command[3]
+        program = container.program[0]
         self._write_script(sandbox / "bin" / program, FAKE_PROGRAM)
         if mac_ip is not None:
             (sandbox / "mac-ip").write_text(mac_ip)
@@ -553,7 +553,7 @@ class Kit:
             stderr=result.stderr,
             links=links,
             program=args.read_text().splitlines() if args.exists() else [],
-            cdp=cdp.read_text() if cdp.exists() else "unset",
+            cdp=cdp.read_text() if cdp.exists() else None,
         )
 
     # Paths.
@@ -571,6 +571,51 @@ class Kit:
             text = f"#!/usr/bin/env bash\nset -euo pipefail\n{text}"
         path.write_text(text)
         path.chmod(0o755)
+
+
+def read_only(container: Container, kit: Kit, *, under: Iterable[Path] | None = None) -> list[str]:
+    """The targets of the read-only mounts, relative to kit.src, sorted.
+
+    With under, only those at or under one of those folders.
+    """
+    roots = [str(p) for p in under] if under is not None else None
+    return kit.rel(
+        m.target
+        for m in container.mounts
+        if m.read_only and (roots is None or any(_is_under(m.target, r) for r in roots))
+    )
+
+
+def folder_mounts(container: Container, kit: Kit) -> list[str]:
+    """The writable mounts at their own paths, relative to kit.src, sorted.
+
+    These are the folders above a read-only mount, and each writable sibling.
+    """
+    return kit.rel(m.target for m in container.mounts if not m.read_only and m.source == m.target)
+
+
+def hooks_mounts(container: Container, kit: Kit, *roots: Path) -> list[str]:
+    """The read-only folder mounts outside every .git, under roots, sorted.
+
+    These are the core.hooksPath folders.
+    """
+    return kit.rel(
+        m.target
+        for m in container.mounts
+        if m.read_only
+        and ".git" not in Path(m.target).parts
+        and any(_is_under(m.target, str(r)) for r in roots)
+    )
+
+
+def ignores_case(folder: Path) -> bool:
+    """Whether the disk that holds folder ignores letter case, as the Mac's does."""
+    probe = folder / "case-probe"
+    probe.write_text("")
+    try:
+        return (folder / "CASE-PROBE").exists()
+    finally:
+        probe.unlink()
 
 
 def _run_and_reap(
@@ -626,50 +671,5 @@ def _compose_subcommand(argv: list[str]) -> str | None:
     return argv[i] if i < len(argv) else None
 
 
-def read_only(container: Container, kit: Kit, *, under: Iterable[Path] | None = None) -> list[str]:
-    """The targets of the read-only mounts, relative to kit.src, sorted.
-
-    With under, only those at or under one of those folders.
-    """
-    roots = [str(p) for p in under] if under is not None else None
-    return kit.rel(
-        m.target
-        for m in container.mounts
-        if m.read_only and (roots is None or any(_is_under(m.target, r) for r in roots))
-    )
-
-
-def folder_mounts(container: Container, kit: Kit) -> list[str]:
-    """The writable mounts at their own paths, relative to kit.src, sorted.
-
-    These are the folders above a read-only mount, and each writable sibling.
-    """
-    return kit.rel(m.target for m in container.mounts if not m.read_only and m.source == m.target)
-
-
-def hooks_mounts(container: Container, kit: Kit, *roots: Path) -> list[str]:
-    """The read-only folder mounts outside every .git, under roots, sorted.
-
-    These are the core.hooksPath folders.
-    """
-    return kit.rel(
-        m.target
-        for m in container.mounts
-        if m.read_only
-        and ".git" not in Path(m.target).parts
-        and any(_is_under(m.target, str(r)) for r in roots)
-    )
-
-
 def _is_under(path: str, root: str) -> bool:
     return path == root or path.startswith(root + "/")
-
-
-def ignores_case(folder: Path) -> bool:
-    """Whether the disk that holds folder ignores letter case, as the Mac's does."""
-    probe = folder / "case-probe"
-    probe.write_text("")
-    try:
-        return (folder / "CASE-PROBE").exists()
-    finally:
-        probe.unlink()
