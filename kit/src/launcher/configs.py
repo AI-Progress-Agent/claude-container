@@ -1,34 +1,38 @@
 """The read-only mounts of what a repo's config names inside a writable mount.
 
 Git on the Mac reads each config file, and runs each command value. A config
-file can include another, and a command value can name a script. Such a file
-inside a writable mount could be written inside, and git on the Mac would
-then read or run it. git status would not show it when git
-ignores the file. In each worktree, the launcher reads every config file git
-reads there: the system, global and repo configs, each config.worktree, and
-each included file, followed through nested includes. Two kinds of path
+file can include another, and a command value can name a script. The
+container can write such a file when it sits inside a writable mount. Git on
+the Mac would then read or run it. When git ignores the file, git status
+does not show the change.
+
+In each worktree, the launcher reads every config file that git reads there.
+These are the system, global and repo configs, and each config.worktree. They
+are also each included file, through nested includes. Two kinds of path
 mount read-only:
 
   - each config file inside a writable mount, an included one among them.
-    Every include counts, whatever its condition: an "onbranch:" condition
+    Every include counts, whatever its condition. An "onbranch:" condition
     turns on when the container switches branch. A relative include resolves
-    against the folder of the file that holds it, and a ~ expands. A missing
-    included file is made empty on the Mac first. Git skips a missing one, so
-    the container could make it.
+    against the folder of the file that holds it, and a ~ expands. Git skips
+    a missing included file, so the container could make it. So the launcher
+    makes it empty on the Mac first.
   - each file or folder that a command value names. _COMMAND_KEYS lists the
-    keys. The value splits into words, as a shell splits it. A relative word
-    resolves against the worktree's root, and against each folder that a cd
-    in the value goes to before it. See _path_word for the words it skips.
+    keys. The value splits into words, as a shell splits it. A string that a
+    shell runs, as in sh -c 'cmd', splits too. A relative word resolves
+    against each folder the shell may be in. That is the worktree's root, or
+    a folder that a cd goes to. _Shell follows each cd. See _path_word for
+    the words it skips.
 
 The launcher cannot guard some paths, as reach.py lists them. A missing path
 inside a writable mount stops the start too, when a word with a / or a cd
-names it. The container could make it. A word that exists from one of the
-folders the value cds to counts as found. The launcher names the worktree, the key, the value and the path of
-each one, and the container does not start.
+names it. The container could make it. For each such path, the launcher
+names the worktree, the key, the value and the path. Then the container does
+not start.
 
-It reads the config only at start, so it does not see a value set or a path
-made during the session. Nor does it see a path that a command builds when
-it runs, such as $(git rev-parse --show-toplevel)/x.
+The launcher reads the config only at start. So it does not see a value set
+or a path made during the session. Nor does it see a path that a command
+builds when it runs, such as $(git rev-parse --show-toplevel)/x.
 """
 
 from __future__ import annotations
@@ -36,7 +40,7 @@ from __future__ import annotations
 import os
 import re
 import shlex
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
 
 from launcher import git
@@ -45,8 +49,9 @@ from launcher.output import refusal
 from launcher.paths import absolute_path, exists, nearest_is_dir, outermost, parent, real_dir
 from launcher.reach import Place, Reach
 
-# Each key whose value git runs as a program or a shell command, from the git
-# 2.56 manual, in lower case. A * stands for a subsection or a name.
+# Each key whose value git runs as a program or a shell command. The list
+# comes from the git 2.56 manual, in lower case. A * stands for a subsection
+# or a name.
 _COMMAND_KEYS = (
     "core.fsmonitor",
     "core.editor",
@@ -88,6 +93,9 @@ _COMMAND_KEYS = (
 
 # The words of a shell command that are punctuation, as shlex splits them.
 _PUNCTUATION = frozenset("();<>|&")
+# The operators in such a word, longest first. shlex keeps a run of
+# punctuation together, as in );.
+_OPERATOR = re.compile(r"&&|\|\||;;|\|&|&>|>>|<<|>&|<&|[();<>|&]")
 # A word such as NAME=value, whose path, if any, follows the =.
 _ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]*=")
 
@@ -179,58 +187,175 @@ class _WorktreeCheck:
         words = _command_words(entry)
         if words is None:
             return
-        # The worktree's root, then each folder a cd goes to, from the one
-        # before it. A cd in a subshell goes nowhere for what follows, so
-        # each word resolves against every one of them.
-        bases = [self.worktree]
-        # Whether a cd went to a folder the launcher cannot know.
-        cd_unknown = False
-        after_cd = False
-        for word in words:
+        shell = _Shell([self.worktree])
+        pending = words[::-1]
+        # Whether the cd before this word is the first command of its list.
+        # None when the word before it is not a cd.
+        cd: bool | None = None
+        while pending:
+            word = pending.pop()
             if set(word) <= _PUNCTUATION:
-                after_cd = False
+                if cd is not None:
+                    shell.cd(None, cd)
+                    cd = None
+                for operator in _OPERATOR.findall(word):
+                    shell = shell.operator(operator)
                 continue
-            was_cd, after_cd = after_cd, word == "cd"
+            inner = self._inner_words(word, shell)
+            if inner is not None:
+                # The shell that runs the string cannot move this one.
+                pending += ["(", *inner, ")"][::-1]
+                continue
+            was_cd, cd = cd, None
+            if word == "cd" and shell.command_first is not None:
+                cd = shell.command_first
+                shell.word(word)
+                continue
             path = _path_word(word)
-            if path is None:
-                cd_unknown = cd_unknown or was_cd
-                continue
-            if word == "cd":
-                continue
-            paths = [path] if path.startswith("/") else [f"{b}/{path}" for b in bases]
-            self._guard_word(entry, paths, names_path=was_cd or "/" in path, cd_unknown=cd_unknown)
-            if was_cd:
-                bases.append(absolute_path(path, bases[-1]))
+            if path is not None:
+                names_path = (was_cd is not None or "/" in path) and not shell.unknown
+                self._guard_word(entry, shell.paths(path), names_path=names_path)
+            if was_cd is not None:
+                shell.cd(path, was_cd)
+            shell.word(word)
 
-    def _guard_word(
-        self, entry: _Entry, paths: list[str], *, names_path: bool, cd_unknown: bool
-    ) -> None:
+    def _inner_words(self, word: str, shell: _Shell) -> list[str] | None:
+        """The words of the shell command that word holds, as in sh -c 'cmd'.
+
+        None when word holds no space or shell punctuation. None also when it
+        names a path that exists, such as a quoted path with a space.
+        """
+        if not any(c.isspace() or c in _PUNCTUATION for c in word):
+            return None
+        path = _path_word(word)
+        if path is not None and any(exists(p) for p in shell.paths(path)):
+            return None
+        words = _split(word)
+        return None if words == [word] else words
+
+    def _guard_word(self, entry: _Entry, paths: list[str], *, names_path: bool) -> None:
         """Guards what a word names, from each of paths.
 
-        names_path says whether the word surely names a path, so a missing
+        names_path says whether the word surely names a path. Then a missing
         one stops the start.
         """
-        found = False
-        missing: str | None = None
         for path in paths:
             place = self.reach.place(path, [self.worktree])
             if place is None:
-                found = found or exists(path)
-            elif place.mount is None:
+                continue
+            if place.mount is None:
                 self._refuse(entry, path)
                 return
-            elif exists(place.path):
-                found = True
+            if exists(place.path):
                 self.guards[place.path] = place
-            elif missing is None:
-                missing = path
-        if missing is not None and not found and not cd_unknown and names_path:
-            self._refuse(entry, missing)
+            elif names_path:
+                self._refuse(entry, path)
 
     def _refuse(self, entry: _Entry, path: str) -> None:
         line = f"{self.worktree}: {entry.key} = {entry.value} names {os.path.normpath(path)}"
         if line not in self.refused:
             self.refused.append(line)
+
+
+@dataclass
+class _Shell:
+    """The folders a shell may be in at each word of a command, as each cd moves it.
+
+    A word resolves against each folder. A command after &&, || or | may run
+    in a folder that a cd before it did not go to, so the list grows. A ;
+    or a ) ends what a cd in a subshell or a pipeline did.
+    """
+
+    # Each folder the shell may be in now.
+    now: list[str]
+    # Whether a cd went to a folder the launcher cannot know.
+    unknown: bool = False
+    # The shell that a ( started this one from.
+    outer: _Shell | None = None
+    # Each folder at the start of this list, and of this pipeline.
+    list_start: list[str] = field(init=False)
+    pipe_start: list[str] = field(init=False)
+    # Each folder the shell stays in when a command before a cd fails.
+    skipped: list[str] = field(init=False)
+    # Whether a | came since the start of this pipeline.
+    piped: bool = field(init=False)
+    # Whether the next word starts a command, and whether that command is
+    # the first of its list.
+    at_command: bool = field(init=False)
+    first: bool = field(init=False)
+
+    def __post_init__(self) -> None:
+        self._start_list()
+
+    @property
+    def command_first(self) -> bool | None:
+        """Whether the next word starts the first command of its list.
+
+        None when the next word starts no command.
+        """
+        return self.first if self.at_command else None
+
+    def paths(self, path: str) -> list[str]:
+        """Each absolute path that path may name from here."""
+        return [path] if path.startswith("/") else [f"{f}/{path}" for f in self.now]
+
+    def word(self, word: str) -> None:
+        """Steps past word. NAME=x, command and builtin come before a command."""
+        if not (_ASSIGNMENT.match(word) or word in ("command", "builtin")):
+            self.at_command = False
+
+    def cd(self, path: str | None, first: bool) -> None:
+        """Moves to path, which a cd names. None for a folder the launcher cannot know.
+
+        first says whether the cd is the first command of its list. A cd to a
+        folder that is not there fails, so the shell stays.
+        """
+        if path is None:
+            self.unknown = True
+            return
+        moved = [absolute_path(path, f) for f in self.now]
+        moved = [m if os.path.isdir(m) else f for m, f in zip(moved, self.now, strict=True)]
+        if not first:
+            self.skipped = _union(self.skipped, self.now)
+        self.now = _union(moved)
+
+    def operator(self, operator: str) -> _Shell:
+        """Steps past a shell operator, such as ; or &&. Returns the shell after it.
+
+        A ( returns a new shell, and its ) returns the outer one.
+        """
+        if operator == "(":
+            return _Shell(self.now, self.unknown, self)
+        if operator == ")" and self.outer is not None:
+            self.outer.at_command = False
+            return self.outer
+        if operator in ("|", "|&"):
+            self.piped = True
+            self.now = _union(self.now, self.pipe_start)
+            self.at_command, self.first = True, False
+        elif operator in ("&&", "||", ";", ";;", "&"):
+            # Each command of a pipeline runs in a shell of its own.
+            if self.piped:
+                self.now = _union(self.now, self.pipe_start)
+            if operator == "||":
+                self.now = _union(self.now, self.skipped, self.list_start)
+            elif operator == "&":
+                # The list ran in a shell of its own.
+                self.now = _union(self.now, self.list_start)
+            if operator in ("&&", "||"):
+                self.pipe_start = self.now
+                self.piped = False
+                self.at_command, self.first = True, False
+            else:
+                self.now = _union(self.now, self.skipped)
+                self._start_list()
+        return self
+
+    def _start_list(self) -> None:
+        self.list_start = self.pipe_start = self.now
+        self.skipped = []
+        self.piped = False
+        self.at_command, self.first = True, True
 
 
 def _worktree_entries(worktree: str) -> list[_Entry]:
@@ -305,25 +430,37 @@ def _command_words(entry: _Entry) -> list[str] | None:
             return None
     if fnmatchcase(key, "difftool.*.path") or fnmatchcase(key, "mergetool.*.path"):
         return [value]
-    lexer = shlex.shlex(value, posix=True, punctuation_chars=True)
+    return _split(value)
+
+
+def _split(command: str) -> list[str]:
+    """The words of command, as a shell splits them."""
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
     lexer.whitespace_split = True
     # A shell starts a comment only at the start of a word.
     lexer.commenters = ""
     try:
         return list(lexer)
     except ValueError:
-        return value.split()
+        return command.split()
+
+
+def _union(*folders: list[str]) -> list[str]:
+    return list(dict.fromkeys(f for group in folders for f in group))
 
 
 def _path_word(word: str) -> str | None:
     """The path that word may name, or None when it names none the launcher can know.
 
     It skips a word that the shell expands when the command runs, with a $
-    or a `, and a URL. An option names no path, unless it has a value after
-    an =, as in --file=x. So does NAME=x.
+    or a `. It skips a URL too. A long option names a path only after an =,
+    as in --file=x. So does NAME=x. A short option may name one after its
+    letter, as in -Fx.
     """
     if "$" in word or "`" in word or "://" in word:
         return None
+    if word.startswith("-") and not word.startswith("--"):
+        word = word[2:].removeprefix("=")
     if word.startswith("-") or _ASSIGNMENT.match(word):
         _, equals, word = word.partition("=")
         if not equals:
