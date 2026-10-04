@@ -1120,9 +1120,9 @@ compose_bind_targets() {
 # counts as one that a launcher set.
 #
 # chflags fails on a read-only disk, and on a file another user owns. Then
-# the launcher clears the flags it set, names each
-# such file, and exits before the container starts. A file it could not
-# flag has no flag of its own to clear.
+# the launcher clears the flags it set, names each such file, and exits
+# before the container starts. A file it could not flag has no flag of its
+# own to clear.
 flag_guarded_files() {
   local file failed=()
   flagged_files=()
