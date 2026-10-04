@@ -165,6 +165,20 @@ collect_worktree_mounts "$work/Link"
 [ "${mounts[*]} " = "$want" ] || fail "through a link, mounts were: ${mounts[*]:-none}"
 rm -f "$work/Link"
 
+# With extensions.worktreeConfig on, git also reads each git directory's
+# config.worktree. Each mounts read-only, and a missing one is made empty
+# first.
+git -C "$work/Main-Clone" config extensions.worktreeConfig true
+main_config=$work/Main-Clone/.git/config.worktree
+agent_config=$work/Main-Clone/.git/worktrees/agent/config.worktree
+other_config=$work/Main-Clone/.git/worktrees/other/config.worktree
+want=$(ro "$agent=$agent" "$other=$other" "$agent_dir=$agent_dir" "$other_dir=$other_dir" \
+  "$main_config=$main_config" "$agent_config=$agent_config" "$other_config=$other_config")
+mounts=()
+collect_worktree_mounts "$work/Main-Clone"
+[ "${mounts[*]} " = "$want" ] || fail "with worktreeConfig, mounts were: ${mounts[*]:-none}"
+[ -f "$other_config" ] || fail "with worktreeConfig, $other_config was not made"
+git -C "$work/Main-Clone" config --unset extensions.worktreeConfig
 
 # The port comes from agent-browser.json, and the browser setup names it.
 use_repo "$work/Main-Clone"

@@ -391,12 +391,14 @@ cannot write it inside. Run from a linked worktree, `docker/cc` also mounts
 the main clone's `.git`, writable, because the worktree's commits and branches
 live there. Its `hooks` and `config` mount read-only, in the same way. So do
 the files that tell git where those are: the `.git` file and the `commondir`
-file of each of the clone's worktrees. Every worktree's `.git` file mounts,
-even for a worktree the container cannot see. Otherwise `git worktree prune`
-inside would take that worktree for deleted, and remove its records from the
-Mac's `.git`. When `docker/` sits below the clone's root, the clone's `.git`
-mounts read-only. Git inside stops at the repo's mount and never finds it, so
-nothing inside needs to write it.
+file of each of the clone's worktrees. With `extensions.worktreeConfig` on,
+each `config.worktree` mounts read-only too. The launcher first makes any
+missing one as an empty file. Every worktree's `.git` file mounts, even for a
+worktree the container cannot see. Otherwise `git worktree prune` inside would
+take that worktree for deleted, and remove its records from the Mac's `.git`.
+When `docker/` sits below the clone's root, the clone's `.git` mounts
+read-only. Git inside stops at the repo's mount and never finds it, so nothing
+inside needs to write it.
 
 So a branch you create inside has no upstream, the remote branch it tracks.
 Git records an upstream in `.git/config`. These commands try to record one:
