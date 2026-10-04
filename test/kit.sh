@@ -307,7 +307,7 @@ added_hooks() {
   local before=${#mounts[@]} arg
   collect_hooks_paths
   for arg in "${mounts[@]:before}"; do
-    case $arg in *:ro) arg=${arg#*:} && printf '%s\n' "${arg%:ro}" ;; esac
+    case $arg in *:ro) mount_target "$arg" ;; esac
   done | sed "s#^$work/##" | LC_ALL=C sort | paste -sd ' ' -
 }
 

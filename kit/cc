@@ -611,10 +611,7 @@ load_local_overrides() {
 collect_nested_clones() {
   local path dir guarded=()
   for path in ${nested_clones[@]+"${nested_clones[@]}"}; do
-    case $path in
-      /*) dir=${path%/} ;;
-      *) dir=$repo/${path%/} ;;
-    esac
+    dir=$(absolute_path "${path%/}" "$repo")
     if [ -d "$dir/.git" ]; then
       guard_clone "$dir"
     elif [ -f "$dir/HEAD" ] && has_git_dir_parts "$dir"; then
