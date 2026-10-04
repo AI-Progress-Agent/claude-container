@@ -143,7 +143,7 @@ load_repo_config() {
 # repo itself.
 main_clone() {
   local dir
-  if dir=$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir 2>/dev/null); then
+  if dir=$(git_common_dir "$repo"); then
     dirname "$dir"
   else
     printf '%s\n' "$repo"
@@ -178,12 +178,18 @@ export_compose_env() {
 # the repo's .git.
 repo_git_dir() {
   local dir
-  if [ ! -d "$repo/.git" ] &&
-    dir=$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir 2>/dev/null); then
+  if [ ! -d "$repo/.git" ] && dir=$(git_common_dir "$repo"); then
     printf '%s\n' "$dir"
   else
     printf '%s\n' "$repo/.git"
   fi
+}
+
+# Prints the absolute path of the git directory shared by $1's clone and all
+# its worktrees: the main clone's .git. Git prints it by its real path. Fails
+# outside git.
+git_common_dir() {
+  git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null
 }
 
 # Sets compose, the docker compose command with the kit's compose file and
