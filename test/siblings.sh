@@ -43,6 +43,9 @@ git -C "$work/this" -c user.name=test -c user.email=test commit -q --allow-empty
 # for a subagent.
 git -C "$work/this" worktree add -q "$work/this/.worktrees/wt"
 git -C "$work/this" worktree add -q "$work/this/.claude/worktrees/agent"
+# A writable sibling's worktree: its pointer files mount read-only too.
+git -C "$work/rw-sibling" -c user.name=test -c user.email=test commit -q --allow-empty -m init
+git -C "$work/rw-sibling" worktree add -q "$work/rw-sibling/.worktrees/wt"
 
 # A writable sibling still needs this repo's origin owner.
 writable_siblings=(rw-sibling rw-other-client)
@@ -51,6 +54,8 @@ expected="-v $work/https-sibling:$work/https-sibling:ro \
 -v $work/rw-sibling:$work/rw-sibling \
 -v $work/rw-sibling/.git/hooks:$work/rw-sibling/.git/hooks:ro \
 -v $work/rw-sibling/.git/config:$work/rw-sibling/.git/config:ro \
+-v $work/rw-sibling/.worktrees/wt/.git:$work/rw-sibling/.worktrees/wt/.git:ro \
+-v $work/rw-sibling/.git/worktrees/wt/commondir:$work/rw-sibling/.git/worktrees/wt/commondir:ro \
 -v $work/ssh-sibling:$work/ssh-sibling:ro \
 -v $work/url-sibling:$work/url-sibling:ro"
 

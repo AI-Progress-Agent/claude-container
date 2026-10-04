@@ -125,29 +125,42 @@ for pair in "$work/Main-Clone:$work/Main-Clone/.git" \
   [ "$REPO_GIT" = "${pair#*:}" ] || fail "from $repo, REPO_GIT was $REPO_GIT"
 done
 
-# A worktree's .git file and the commondir file in its git directory tell git
-# where to find the hooks and config. They mount read-only, so the container
-# cannot point git on the Mac at a config of its own. That holds for every
-# worktree of the clone, not only the one docker/cc runs from.
+# Each worktree's .git file and the commondir file in its git directory tell
+# git where to find the hooks and config. They mount read-only, so the
+# container cannot point git on the Mac at a config of its own. That holds
+# for every worktree of the clone, not only the one docker/cc runs from.
 git -C "$work/Main-Clone" worktree add -q "$work/Main-Clone/.worktrees/other"
-commondirs="-v $work/Main-Clone/.git/worktrees/agent/commondir:$work/Main-Clone/.git/worktrees/agent/commondir:ro \
--v $work/Main-Clone/.git/worktrees/other/commondir:$work/Main-Clone/.git/worktrees/other/commondir:ro"
-use_repo "$work/Main-Clone/.claude/worktrees/agent"
-export_compose_env
+ro() {
+  local file
+  for file in "$@"; do
+    printf -- '-v %s:%s:ro ' "${file%%=*}" "${file#*=}"
+  done
+}
+agent=$work/Main-Clone/.claude/worktrees/agent/.git
+other=$work/Main-Clone/.worktrees/other/.git
+agent_dir=$work/Main-Clone/.git/worktrees/agent/commondir
+other_dir=$work/Main-Clone/.git/worktrees/other/commondir
+want=$(ro "$agent=$agent" "$other=$other" "$agent_dir=$agent_dir" "$other_dir=$other_dir")
+for dir in "$work/Main-Clone/.claude/worktrees/agent" "$work/Main-Clone"; do
+  mounts=()
+  collect_worktree_mounts "$dir"
+  [ "${mounts[*]} " = "$want" ] || fail "from $dir, mounts were: ${mounts[*]:-none}"
+done
 mounts=()
-collect_worktree_mounts
-[ "${mounts[*]}" = "-v $repo/.git:$repo/.git:ro $commondirs" ] ||
-  fail "from a worktree, mounts were: ${mounts[*]:-none}"
-use_repo "$work/Main-Clone"
-export_compose_env
-mounts=()
-collect_worktree_mounts
-[ "${mounts[*]}" = "$commondirs" ] || fail "from the main clone, mounts were: ${mounts[*]:-none}"
-use_repo "$work/My.App"
-export_compose_env
-mounts=()
-collect_worktree_mounts
+collect_worktree_mounts "$work/My.App"
 [ ${#mounts[@]} -eq 0 ] || fail "outside git, mounts were: ${mounts[*]}"
+
+# Reached through a symbolic link, the container writes each file by the
+# link's path, and git names it by its real path. Each mounts at both.
+ln -s "$work/Main-Clone" "$work/Link"
+want=$(ro "$agent=$agent" "$agent=$work/Link/.claude/worktrees/agent/.git" \
+  "$other=$other" "$other=$work/Link/.worktrees/other/.git" \
+  "$agent_dir=$agent_dir" "$agent_dir=$work/Link/.git/worktrees/agent/commondir" \
+  "$other_dir=$other_dir" "$other_dir=$work/Link/.git/worktrees/other/commondir")
+mounts=()
+collect_worktree_mounts "$work/Link"
+[ "${mounts[*]} " = "$want" ] || fail "through a link, mounts were: ${mounts[*]:-none}"
+rm -f "$work/Link"
 
 # The port comes from agent-browser.json, and the browser setup names it.
 use_repo "$work/Main-Clone"
