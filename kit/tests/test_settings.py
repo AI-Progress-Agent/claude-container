@@ -98,10 +98,10 @@ def test_kit_sh_stops_the_start_and_prints_its_kit_toml(kit: Kit) -> None:
 def test_kit_sh_that_sets_only_defaults_asks_for_an_empty_kit_toml(kit: Kit) -> None:
     """A setting left at its default stays out of kit.toml."""
     repo = kit.clone(kit.src / "app")
-    (repo / "agent-browser.json").write_text('{"cdp": "9222"}\n')
     docker = kit.install(repo)
     (docker / "kit.sh").write_text(
-        "project_name=app-claude\nstart_commands=true\nnested_clones=()\nagent_browser_port=9222\n"
+        'echo "loading kit.sh"\nstart_commands=true\nnested_clones=()\n'
+        'project_name=$project_name\nagent_browser_port="$agent_browser_port"\n'
     )
     run = kit.run(repo)
     assert run.returncode == 1
@@ -111,6 +111,19 @@ def test_kit_sh_that_sets_only_defaults_asks_for_an_empty_kit_toml(kit: Kit) -> 
         f"so the container did not start. kit.sh sets only defaults: make {docker / 'kit.toml'} "
         "an empty file, then delete kit.sh."
     ) in run.lines()
+
+
+def test_kit_sh_that_pins_this_clones_defaults_keeps_them(kit: Kit) -> None:
+    """Another clone of the repo can have another folder name or browser port."""
+    repo = kit.clone(kit.src / "app")
+    (repo / "agent-browser.json").write_text('{"cdp": "9222"}\n')
+    docker = kit.install(repo)
+    (docker / "kit.sh").write_text(
+        'echo "loading kit.sh"\nproject_name=app-claude\nagent_browser_port=9222\n'
+    )
+    run = kit.run(repo)
+    assert run.returncode == 1
+    assert tomllib.loads(run.stdout) == {"project_name": "app-claude", "agent_browser_port": 9222}
 
 
 def test_kit_toml_wins_over_a_kit_sh_beside_it(kit: Kit) -> None:
