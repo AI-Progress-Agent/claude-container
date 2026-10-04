@@ -365,7 +365,9 @@ way. So do the files that tell git where those are: the `.git` file and the
 `commondir` file of each of the clone's worktrees. Every worktree's `.git`
 file mounts, even for a worktree the container cannot see. Otherwise
 `git worktree prune` inside would take that worktree for deleted, and remove
-its records from the Mac's `.git`.
+its records from the Mac's `.git`. When `docker/` sits below the clone's root, the clone's
+`.git` mounts read-only. Git inside stops at the repo's mount and never finds
+it, so nothing inside needs to write it.
 
 So a branch you create inside has no upstream, the remote branch it tracks.
 Git records an upstream in `.git/config`. These commands try to record one:

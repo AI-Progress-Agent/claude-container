@@ -114,15 +114,19 @@ load_repo_config
 # REPO_GIT is the git directory whose hooks and config compose.yaml mounts
 # read-only. From the main clone, it is the clone's .git. A worktree's .git is
 # a file, so from a worktree REPO_GIT is the main clone's .git. A directory
-# inside the clone gets the same. Outside git, REPO_GIT is the repo's .git.
+# inside the clone gets the same, but read-only: git there stops at the
+# repo's mount, so nothing inside needs to write it. Outside git, REPO_GIT is
+# the repo's .git.
 mkdir -p "$work/Main-Clone/sub/docker"
-for pair in "$work/Main-Clone:$work/Main-Clone/.git" \
-  "$work/Main-Clone/.claude/worktrees/agent:$work/Main-Clone/.git" \
-  "$work/Main-Clone/sub:$work/Main-Clone/.git" \
-  "$work/My.App:$work/My.App/.git"; do
-  use_repo "${pair%%:*}"
+for case in "$work/Main-Clone:$work/Main-Clone/.git:rw" \
+  "$work/Main-Clone/.claude/worktrees/agent:$work/Main-Clone/.git:rw" \
+  "$work/Main-Clone/sub:$work/Main-Clone/.git:ro" \
+  "$work/My.App:$work/My.App/.git:rw"; do
+  use_repo "${case%%:*}"
   export_compose_env
-  [ "$REPO_GIT" = "${pair#*:}" ] || fail "from $repo, REPO_GIT was $REPO_GIT"
+  want=${case#*:}
+  [ "$REPO_GIT:$REPO_GIT_MODE" = "$want" ] ||
+    fail "from $repo, REPO_GIT was $REPO_GIT:$REPO_GIT_MODE"
 done
 
 # Each worktree's .git file and the commondir file in its git directory tell
