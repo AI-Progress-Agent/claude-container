@@ -417,6 +417,9 @@ mount read-only:
 - The `hooks`, `config` and `commondir` of each submodule's git directory,
   under `.git/modules`. `git status` in the repo runs git in each submodule.
 - The folder that `core.hooksPath` names. See below.
+- Each config file inside a writable mount that git reads, an included one
+  among them, and each file or folder that a command value in the config
+  names. See below.
 
 The Mac's disk ignores letter case. Each file above mounts read-only on its
 own, in a writable folder. So a write inside to `.git/CONFIG`, by a name in
@@ -426,7 +429,8 @@ Mac's file. A rename, such as `mv t .git/CONFIG`, would too.
 To stop that, at start the launcher sets the Mac's immutable flag, `uchg`, on
 each file that mounts read-only on its own inside a writable mount. That
 covers each `config`, `commondir`, `config.worktree` and worktree `.git` file
-above that the container can reach. Every write, rename, removal and `chmod`
+above that the container can reach. It also covers each file that the config
+includes or names. Every write, rename, removal and `chmod`
 of the file from inside then fails with "Operation not permitted". Root
 inside cannot clear the flag. A folder, such as `hooks`, needs no flag: a
 write to `.git/HOOKS` lands in the read-only mount. The flag does not guard a
@@ -517,6 +521,64 @@ docker/cc: core.hooksPath names a folder the launcher cannot mount read-only, so
 Point core.hooksPath at a folder below the worktree's root, with no symbolic link or .. on the way. Or unset it.
 ```
 
+A repo's config can name other files in the repo, and git on the Mac reads
+or runs them. A config file that `include.path` names can set any value.
+`core.fsmonitor`, an alias that starts with `!` and a filter driver each
+name a command that git runs, some at `git status`. At start, the launcher
+reads every config file that git reads in each worktree: the system, global
+and repo configs, each `config.worktree`, and each file they include. Inside
+a writable mount, these mount read-only:
+
+- Each config file, an included one among them. Every `include.path` and
+  `includeIf.<condition>.path` counts, whatever its condition. The launcher
+  first makes a missing included file on the Mac, empty. Git skips a missing
+  one, so the container could make it otherwise. The file stays after the
+  session.
+- Each file or folder that a command value names. The launcher splits the
+  value into words, as a shell does. It resolves a relative word against the
+  worktree's root, and against each folder that a `cd` in the value names.
+
+The launcher checks the values of these keys: `core.fsmonitor`,
+`core.editor`, `core.pager`, `pager.*`, `core.sshCommand`, `core.gitProxy`,
+`core.askPass`, `core.alternateRefsCommand`, `sequence.editor`, `alias.*`,
+`hook.*.command`, `credential.helper`, `credential.*.helper`,
+`diff.external`, `diff.*.command`, `diff.*.textconv`, `filter.*.clean`,
+`filter.*.smudge`, `filter.*.process`, `merge.*.driver`, `difftool.*.cmd`,
+`difftool.*.path`, `mergetool.*.cmd`, `mergetool.*.path`, `gpg.program`,
+`gpg.*.program`, `gpg.ssh.defaultKeyCommand`, `remote.*.uploadpack`,
+`remote.*.receivepack`, `trailer.*.cmd`, `trailer.*.command`,
+`gc.recentObjectsHook`, `browser.*.cmd`, `man.*.cmd`, `guitool.*.cmd` and
+`sendemail.*cmd`. An alias counts only when it starts with `!`. A credential
+helper counts when it starts with `!` or is an absolute path. Keys that only
+read a file, such as `core.excludesFile` and `commit.template`, run nothing,
+so the launcher does not check them.
+
+So you cannot edit a file or folder that the config names inside. Edit it on
+the Mac after the session. The launcher flags each such file, as above.
+
+The launcher does not catch everything:
+
+- It skips a word that the shell expands when the command runs, such as one
+  with a `$`. So it does not catch a path that a command builds, such as
+  `$(git rev-parse --show-toplevel)/x`.
+- It reads the config only at start. It does not guard a value set during
+  the session, or a path made during it.
+- A worktree made inside resolves a relative word against its own root. The
+  file there stays writable. Before you run git on the Mac in such a
+  worktree, check the files that the config's commands name there.
+
+The launcher refuses to start when the config names a path it cannot mount
+read-only. It refuses the paths it refuses for `core.hooksPath`, and an
+included path that is not a file. It also refuses a word with a `/` that
+names a missing path inside a writable mount, because the container could
+make it. It names the worktree, the key, the value and the path:
+
+```text
+docker/cc: a config value names a path the launcher cannot mount read-only, so the container did not start:
+  /path/to/repo: core.fsmonitor = ./tools/fsm.sh names /path/to/repo/tools/fsm.sh
+Make each missing path. Or point the value at a path below the worktree's root, with no symbolic link or .. on the way. Or unset it.
+```
+
 Linux lets the container rename a folder that holds a read-only mount. The
 mount moves with the folder. The container could then make a new folder at
 the old path, with its own hooks or config. Git on the Mac would read them.
@@ -533,6 +595,7 @@ mounts on its own. It mounts writable, at its own path. These folders are:
   `vendor/sdk` and `vendor/sdk/.git`
 - a writable sibling's `.git`
 - each folder above the `core.hooksPath` folder, such as `.husky`
+- each folder above a file or folder that the config names, such as `tools`
 
 The repo's own `.git` is already a mount of its own, and so is a folder that
 a compose file mounts. Writes inside each folder still work. A rename or

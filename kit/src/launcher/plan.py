@@ -10,9 +10,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from launcher.clones import collect_nested_clones, collect_sibling_repos
+from launcher.configs import collect_config_paths
 from launcher.draft import Draft, Mount, Refused
 from launcher.flags import guarded_files
-from launcher.gitdirs import collect_worktree_mounts
+from launcher.gitdirs import collect_worktree_mounts, guarded_worktrees
 from launcher.hooks import collect_hooks_paths
 from launcher.local import LocalOverrides
 from launcher.marketplaces import collect_marketplaces
@@ -82,7 +83,9 @@ def plan_run(host: Host) -> RunPlan:
         collect_worktree_mounts(draft, host.repo)
         collect_sibling_repos(draft, list(host.settings.writable_siblings))
         collect_nested_clones(draft, list(host.local.nested_clones))
+        draft.worktrees = guarded_worktrees(draft.guarded_git_dirs)
         collect_hooks_paths(draft)
+        collect_config_paths(draft)
         collect_folder_mounts(draft, compose_binds)
         refuse_git_pointers(draft)
         collect_marketplaces(draft, host.home, list(host.local.skip_marketplaces), compose_binds)

@@ -43,7 +43,9 @@ def guarded_files(draft: Draft) -> list[str]:
     ]:
         if not read_only or not draft.disk.is_file(source) or not is_under_any(target, writable):
             continue
-        folder = real_dir(os.path.dirname(source)) or ""
+        # A folder the plan makes has no real path yet. Its path is spelled
+        # as on disk up to the part that is missing.
+        folder = real_dir(os.path.dirname(source)) or os.path.dirname(source)
         real = f"{folder}/{os.path.basename(source)}"
         if real not in found:
             found.append(real)

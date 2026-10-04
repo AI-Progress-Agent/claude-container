@@ -113,6 +113,30 @@ def guard_whole_git_dir(draft: Draft, git_dir: str, real: str, typed: str) -> No
     guard_git_dir(draft, git_dir, real, typed)
 
 
+def guarded_worktrees(git_dirs: list[str]) -> list[str]:
+    """The real path of each worktree of each git folder in git_dirs.
+
+    A bare repo has no worktree, so its git folder stands in for one: git
+    resolves a relative core.hooksPath there. A worktree whose folder is
+    missing is left out.
+
+    A submodule's git folder can list itself for its checkout, which its
+    core.worktree names, relative to it. Git ignores core.worktree there once
+    the folder has a commondir, so this reads it.
+    """
+    found: list[str] = []
+    for git_dir in git_dirs:
+        for worktree in git.worktrees(f"--git-dir={git_dir}"):
+            if worktree == git_dir:
+                named = git.git("config", "-f", f"{git_dir}/config", "core.worktree")
+                if named is not None:
+                    worktree = absolute_path(named, git_dir)
+            real = real_dir(worktree)
+            if real is not None:
+                found.append(real)
+    return found
+
+
 def add_git_file_mount(draft: Draft, file: str, real: str, typed: str) -> None:
     """Mounts file read-only at the real path git names it by.
 
