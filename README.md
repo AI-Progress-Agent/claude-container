@@ -78,12 +78,13 @@ Three limits apply to `docker/cc.local`:
    rest of the repo stays out of the image.
 4. Add `docker/kit.sh` if a default does not fit. Each setting is optional:
 
-   | Setting              | Default                                                                                                                                    | Sets                                                                                                |
-   | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
-   | `project_name`       | the main clone's directory name plus `-claude`, in lower case, with each character other than `a-z`, `0-9`, `_` and `-` turned into a dash | the image name and the volumes, the login among them                                                |
-   | `writable_siblings`  | none                                                                                                                                       | the sibling repos that mount writable, as a bash array of directory names, such as `(plugins-repo)` |
-   | `start_commands`     | `true`, which does nothing                                                                                                                 | shell commands run inside at each start, before Claude                                              |
-   | `agent_browser_port` | the `cdp` port in the repo's `agent-browser.json`                                                                                          | the Mac Chrome port that `agent-browser` drives                                                     |
+   | Setting              | Default                                                                                                                                    | Sets                                                                                                     |
+   | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+   | `project_name`       | the main clone's directory name plus `-claude`, in lower case, with each character other than `a-z`, `0-9`, `_` and `-` turned into a dash | the image name and the volumes, the login among them                                                     |
+   | `writable_siblings`  | none                                                                                                                                       | the sibling repos that mount writable, as a bash array of directory names, such as `(plugins-repo)`      |
+   | `start_commands`     | `true`, which does nothing                                                                                                                 | shell commands run inside at each start, before Claude                                                   |
+   | `agent_browser_port` | the `cdp` port in the repo's `agent-browser.json`                                                                                          | the Mac Chrome port that `agent-browser` drives                                                          |
+   | `nested_clones`      | none                                                                                                                                       | the clones inside the repo kept on purpose, as a bash array of paths in the repo, such as `(vendor/sdk)` |
 
    Two repos with one `project_name` share a login and an image, so give each
    repo its own. A worktree takes its main clone's name, so it shares that
@@ -257,7 +258,9 @@ cannot fetch inside, so it is as current as the Mac's last fetch.
 
 A sibling named in `writable_siblings` mounts writable instead. Its
 `.git/hooks` and `.git/config` still mount read-only, as the repo's do, and
-so do its worktrees' `.git` and `commondir` files. Use
+so do the other files that tell git where to find them. The launcher searches
+it for a `.git` or a bare repo, as it searches the repo. See
+[GitHub operations](#github-operations). Use
 it for a repo that has no container of its own, so its work happens in this
 repo's sessions. Code written there can run on the Mac too, such as a plugin
 that a Mac session loads. Review it as you would a change to the repo's
@@ -389,16 +392,59 @@ would run on your Mac at its next `git` command, and `git status` would not
 show it. Commits and pushes still work. A command that writes `.git/config`
 cannot write it inside. Run from a linked worktree, `docker/cc` also mounts
 the main clone's `.git`, writable, because the worktree's commits and branches
-live there. Its `hooks` and `config` mount read-only, in the same way. So do
-the files that tell git where those are: the `.git` file and the `commondir`
-file of each of the clone's worktrees. With `extensions.worktreeConfig` on,
-each `config.worktree` mounts read-only too. The launcher first makes any
-missing one as an empty file. Every worktree's `.git` file mounts, even for a
-worktree the container cannot see. Otherwise `git worktree prune` inside would
-take that worktree for deleted, and remove its records from the Mac's `.git`.
-When `docker/` sits below the clone's root, the clone's `.git` mounts
-read-only. Git inside stops at the repo's mount and never finds it, so nothing
-inside needs to write it.
+live there. Its `hooks` and `config` mount read-only, in the same way. When
+`docker/` sits below the clone's root, the clone's `.git` mounts read-only.
+Git inside stops at the repo's mount and never finds it, so nothing inside
+needs to write it.
+
+Other files tell git where to find hooks and a config. A container that
+writes one could send git on the Mac to hooks or a config of its own. These
+mount read-only:
+
+- The `.git` file and the `commondir` file of each of the clone's worktrees.
+  Every worktree's `.git` file mounts, even for a worktree the container
+  cannot see. Otherwise `git worktree prune` inside would take that worktree
+  for deleted, and remove its records from the Mac's `.git`.
+- A `commondir` file in the main clone's `.git`. Git takes the directory it
+  names for the `.git`. The launcher first makes one that names the `.git`
+  itself, as `../.git`, which git reads as no `commondir` at all. The file
+  stays after the session.
+- With `extensions.worktreeConfig` on, each `config.worktree`. The launcher
+  first makes any missing one as an empty file.
+- The `hooks`, `config` and `commondir` of each submodule's git directory,
+  under `.git/modules`. `git status` in the repo runs git in each submodule.
+
+A read-only mount needs a file that exists at start. So these stay writable:
+
+- a `.git` anywhere in the repo, as a directory, a file or a link, in any
+  case. The Mac's disk ignores case, so git takes `.GIT` for `.git`. Git run
+  below it on the Mac uses it in place of the repo's own.
+- a bare repo anywhere in the repo: a folder with `HEAD`, `objects` and
+  `refs` in it, which git takes for a `.git`
+- the files of a worktree or a submodule made during the session
+
+The launcher searches the repo for these. At start, it refuses to start if it
+finds one. It names each one, for you to delete:
+
+```text
+docker/cc: these could lead git on the Mac to hooks or a config written inside, so the container did not start:
+  /path/to/repo/vendor/sdk/.git
+```
+
+To keep a clone inside the repo, add its path to `nested_clones` in
+`docker/kit.sh` or [`docker/cc.local`](#dockercclocal). Its `.git/hooks`,
+`.git/config` and the files above then mount read-only, as a writable
+sibling's do.
+
+During the session, the launcher searches again about every 5 seconds. It
+moves each one it finds aside, to its name plus `.cc-blocked`, and tells
+`notify_host`. When the session ends, it names each one it moved. A worktree
+that `git worktree add` makes inside passes, while its `commondir` names the
+main clone's `.git` and its `config.worktree` stays empty. A submodule that
+`git submodule add` or `git submodule update --init` makes inside does not
+pass: its config is writable, so its `.git` file moves aside. Add or
+initialize submodules on the Mac. Git on the Mac can still read a new file in
+the seconds before the launcher moves it.
 
 So a branch you create inside has no upstream, the remote branch it tracks.
 Git records an upstream in `.git/config`. These commands try to record one:
@@ -513,7 +559,7 @@ the repo's `docker/` directory.
 The launcher sources this shell file on the Mac before the container starts.
 It sources the file inside a function. So `declare` and `typeset` need `-g`
 to set a variable that the launcher still sees afterwards. `$@` holds the
-arguments that go to Claude or bash. Use the file for four things:
+arguments that go to Claude or bash. Use the file for five things:
 
 - Export a value that a variable in `compose.local.yaml` copies. List the
   variable name with no value under `environment:`, and Compose copies it from
@@ -528,6 +574,14 @@ arguments that go to Claude or bash. Use the file for four things:
 
   ```bash
   skip_marketplaces=(other-client-marketplace)
+  ```
+
+- Add to `nested_clones` each clone inside the repo that is yours alone,
+  such as one that `.gitignore` keeps out. See
+  [GitHub operations](#github-operations).
+
+  ```bash
+  nested_clones+=(scratch/upstream)
   ```
 
 This is where a login that the Mac keeps in the keychain gets handed over. The
