@@ -27,8 +27,8 @@ The kit has three parts:
   base image, adds your Mac user with your Mac home path, and installs the
   repo's own `mise.toml`. `example/docker/Dockerfile` is one.
 - **The launcher**, which builds the repo layer and starts the container. It
-  is a Python package in `kit/src/launcher`, and `kit/cc` runs it with uv. It
-  ships inside the base image at `/opt/kit`. Each repo keeps a
+  is a Python package in `kit/src/launcher`. `kit/cc` sets it up with uv and
+  runs it. It ships inside the base image at `/opt/kit`. Each repo keeps a
   short stub as `docker/cc`. The stub reads the tag from the `FROM` line,
   copies `/opt/kit` to `~/.cache/claude-container/<tag>` on first use, and runs
   the launcher from there. With `XDG_CACHE_HOME` set, the copy goes under it
@@ -84,7 +84,7 @@ Three limits apply to `docker/cc.local`:
 
    | Setting              | Default                                                                                                                                    | Sets                                                                                                                    |
    | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
-   | `project_name`       | the main clone's directory name plus `-claude`, in lower case, with each character other than `a-z`, `0-9`, `_` and `-` turned into a dash | the image name and the volumes, the login among them, as a string such as `"app-claude"`                                |
+   | `project_name`       | the main clone's folder name plus `-claude`, in lower case, with each character other than `a-z`, `0-9`, `_` and `-` turned into a dash    | the image name and the volumes, the login among them, as a string such as `"app-claude"`                                |
    | `writable_siblings`  | none                                                                                                                                       | the sibling repos that mount writable, as a list of folder names, such as `["plugins-repo"]`                            |
    | `start_commands`     | none                                                                                                                                       | shell commands run inside at each start, before Claude, as a list such as `["pnpm install"]`. They run joined with `&&` |
    | `agent_browser_port` | the `cdp` port in the repo's `agent-browser.json`                                                                                          | the Mac Chrome port that `agent-browser` drives, as a number. With `false`, it drives no Chrome                         |
@@ -93,9 +93,10 @@ Three limits apply to `docker/cc.local`:
    Two repos with one `project_name` share a login and an image, so give each
    repo its own. A worktree takes its main clone's name, so it shares that
    clone's login and image.
-   [`example/docker/kit.toml`](example/docker/kit.toml) sets each one. The
-   launcher checks the file at each start. An unknown key, or a value of the
-   wrong type, stops the start, and the message names the file and the key.
+   [`example/docker/kit.toml`](example/docker/kit.toml) sets each one but
+   `agent_browser_port`, which it leaves at the default. The launcher checks
+   the file at each start. An unknown key, or a value of the wrong type, stops
+   the start, and the message names the file and the key.
 
 5. Add `docker/compose.repo.yaml` for the repo's own volumes and environment
    variables. For example, a repo that installs `node_modules` at start keeps
@@ -203,8 +204,8 @@ container starts with the defaults.
 
 The printed `kit.toml` holds each setting that `kit.sh` changes from its
 default. It also keeps a `project_name` or `agent_browser_port` that `kit.sh`
-sets, even to this clone's default, because another clone can have another
-default. A setting that `kit.sh` builds, such as a path made from `$repo`,
+sets to this clone's default. Another clone can have another default, so the
+value stays. A setting that `kit.sh` builds, such as a path made from `$repo`,
 comes out as the value it had on your Mac. Check those before you commit.
 `docker/cc.local` needs no change.
 
@@ -822,8 +823,8 @@ variables the file defines.
 
 The helper sources the file inside a function. So `declare` and `typeset`
 need `-g` to set a variable that the launcher or `notify_host` reads
-afterwards. `$@`
-holds the arguments that go to Claude or bash. Use the file for five things:
+afterwards. `$@` holds the arguments that go to Claude or bash. Use the file
+for five things:
 
 - Export a value that a variable in `compose.local.yaml` copies. List the
   variable name with no value under `environment:`, and Compose copies it from
