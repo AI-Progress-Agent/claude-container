@@ -47,9 +47,8 @@ Settings stack in three levels, and a later level wins:
 
 Three limits apply to `docker/cc.local`:
 
-- The launcher reads it after it has named the project and found the sibling
-  repos. So it cannot change `project_name` or `writable_siblings`. Set those
-  in `docker/kit.toml`.
+- The launcher takes `project_name` and `writable_siblings` from
+  `docker/kit.toml` alone. So `docker/cc.local` cannot change them.
 - `docker/cc build` and `docker/cc upgrade` do not read it.
 - The launcher sets `HOST_HOME`, `REPO`, `REPO_GIT`, `REPO_GIT_MODE`,
   `HOST_USER`, `PROJECT_KEY` and `PROJECT_NAME` for Compose before it reads
@@ -82,20 +81,20 @@ Three limits apply to `docker/cc.local`:
    rest of the repo stays out of the image.
 4. Add `docker/kit.toml` if a default does not fit. Each setting is optional:
 
-   | Setting              | Default                                                                                                                                    | Sets                                                                                                                    |
-   | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
-   | `project_name`       | the main clone's folder name plus `-claude`, in lower case, with each character other than `a-z`, `0-9`, `_` and `-` turned into a dash    | the image name and the volumes, the login among them, as a string such as `"app-claude"`                                |
-   | `writable_siblings`  | none                                                                                                                                       | the sibling repos that mount writable, as a list of folder names, such as `["plugins-repo"]`                            |
-   | `start_commands`     | none                                                                                                                                       | shell commands run inside at each start, before Claude, as a list such as `["pnpm install"]`. They run joined with `&&` |
-   | `agent_browser_port` | the `cdp` port in the repo's `agent-browser.json`                                                                                          | the Mac Chrome port that `agent-browser` drives, as a number. With `false`, it drives no Chrome                         |
-   | `nested_clones`      | none                                                                                                                                       | the clones and bare repos inside the repo kept on purpose, as a list of paths in the repo, such as `["vendor/sdk"]`     |
+   | Setting              | Default                                                                                                                                 | Sets                                                                                                                                                                 |
+   | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+   | `project_name`       | the main clone's folder name plus `-claude`, in lower case, with each character other than `a-z`, `0-9`, `_` and `-` turned into a dash | the image name and the volumes, the login among them, as a string such as `"app-claude"`. It takes only `a-z`, `0-9`, `_` and `-`, and starts with a letter or digit |
+   | `writable_siblings`  | none                                                                                                                                    | the sibling repos that mount writable, as a list of folder names, such as `["plugins-repo"]`                                                                         |
+   | `start_commands`     | none                                                                                                                                    | shell commands run inside at each start, before Claude, as a list such as `["pnpm install"]`. They run joined with `&&`                                              |
+   | `agent_browser_port` | the `cdp` port in the repo's `agent-browser.json`                                                                                       | the Mac Chrome port that `agent-browser` drives, as a number. With `false`, it drives no Chrome                                                                      |
+   | `nested_clones`      | none                                                                                                                                    | the clones and bare repos inside the repo kept on purpose, as a list of paths in the repo, such as `["vendor/sdk"]`                                                  |
 
    Two repos with one `project_name` share a login and an image, so give each
    repo its own. A worktree takes its main clone's name, so it shares that
    clone's login and image.
    [`example/docker/kit.toml`](example/docker/kit.toml) sets each one but
    `agent_browser_port`, which it leaves at the default. The launcher checks
-   the file at each start. An unknown key, or a value of the wrong type, stops
+   the file at each start. An unknown key, or a value that does not fit, stops
    the start, and the message names the file and the key.
 
 5. Add `docker/compose.repo.yaml` for the repo's own volumes and environment
@@ -258,15 +257,17 @@ mounts each such folder read-only, at its own path. It finds them in
 `~/.claude/plugins/known_marketplaces.json`, which lists marketplaces from
 `settings.json` and from `/plugin marketplace add` alike. That file can lag
 behind `settings.json`, such as on a new machine. So the launcher also reads
-`extraKnownMarketplaces` in `~/.claude/settings.json`, and its path wins.
+`extraKnownMarketplaces` in `~/.claude/settings.json`. When the two files give
+one marketplace different sources, the one in `settings.json` wins.
 
 The launcher leaves a marketplace out in these cases:
 
 - `skip_marketplaces` in [`docker/cc.local`](#dockercclocal) names it.
 - Its folder is missing on the Mac.
 - The container already sees its folder: the folder is in the repo, in a
-  sibling repo, or in a bind mount in any compose file. Those files are the
-  kit's `compose.yaml`, `docker/compose.repo.yaml` and
+  mount the launcher already adds, such as a sibling repo or
+  `~/.claude/plugins`, or in a bind mount in any compose file. Those files
+  are the kit's `compose.yaml`, `docker/compose.repo.yaml` and
   `docker/compose.local.yaml`.
 
 At start, the launcher prints these lines:
@@ -277,6 +278,7 @@ At start, the launcher prints these lines:
 | `docker/cc: skipped marketplaces: <names>`                  | `skip_marketplaces` keeps these out, so their plugins do not load |
 | `docker/cc: marketplace <name> has no folder at <path> ...` | The Mac has no folder at that path, so the plugins do not load    |
 | `docker/cc: docker compose config failed, ...`              | The compose files did not read, so a marketplace can mount twice  |
+| `docker/cc: ... does not read as JSON, ...`                 | One of the two files is not valid JSON, so no marketplace mounts  |
 
 ### Sibling repos
 
@@ -342,8 +344,9 @@ needs a login.
    ```
 
 2. Sign that Chrome in once. The profile keeps the login.
-3. Inside, run `agent-browser` as usual. The launcher sets `AGENT_BROWSER_CDP`
-   at start, so each command connects to that Chrome.
+3. Inside, run `agent-browser` as usual. When the repo has a port, the
+   launcher sets `AGENT_BROWSER_CDP` at start, so each command connects to
+   that Chrome.
 
 The port is `agent_browser_port`, which by default comes from the `cdp` field
 of the repo's `agent-browser.json`. Keep it in that file, so the Mac task that
@@ -590,8 +593,10 @@ a writable mount, these mount read-only:
   value into words, as a shell does. It also splits a string that a shell
   runs, as in `sh -c 'cmd'`. It resolves a relative word against each folder
   the shell may be in: the worktree's root, or a folder that a `cd` goes to.
-  A `cd` in a subshell, a pipeline, or after `&&` may leave the shell where
-  it was, so a later word resolves against both folders.
+  A `cd` in a pipeline, or after `&&`, may leave the shell where it was, so
+  a later word resolves against both folders. A `cd` in a subshell, such as
+  `(cd x && ...)`, ends at the `)`, so a word after it resolves against the
+  folder before the subshell.
 
 The launcher checks the values of these keys: `core.fsmonitor`,
 `core.editor`, `core.pager`, `pager.*`, `core.sshCommand`, `core.gitProxy`,
@@ -679,6 +684,7 @@ delete:
 ```text
 docker/cc: these could lead git on the Mac to hooks or a config written inside, so the container did not start:
   /path/to/repo/vendor/sdk/.git
+Delete each one. To keep a clone or a bare repo inside the repo or a writable sibling, add its path to nested_clones in docker/kit.toml or docker/cc.local.
 ```
 
 To keep a clone inside the repo, add its path to `nested_clones` in
@@ -808,9 +814,11 @@ Every source you name must exist on the Mac. A missing one does not fail:
 Docker creates it as an empty directory owned by root, and the container sees
 an empty directory.
 
-The launcher sets `HOST_HOME`, `REPO`, `HOST_USER`, `PROJECT_KEY` and
-`PROJECT_NAME`, and you can use them here. A relative path resolves against
-the repo's `docker/` directory.
+The launcher sets `HOST_HOME`, `REPO`, `REPO_GIT`, `REPO_GIT_MODE`,
+`HOST_USER`, `PROJECT_KEY` and `PROJECT_NAME`, and you can use them here.
+`REPO_GIT` is the main clone's `.git`, which differs from `$REPO/.git` in a
+linked worktree. A variable that `docker/cc.local` exports works here too. A
+relative path resolves against the repo's `docker/` directory.
 
 ### `docker/cc.local`
 
@@ -1004,7 +1012,8 @@ KIT_DEV=../claude-container docker/cc
 
 The stub then runs the checkout's launcher. `build` and `upgrade` build the
 checkout's base image first, and the repo's image is built on it in place of
-the image the `FROM` line names. The `FROM` line itself stays as it is. Run a
+the image the `FROM` line names. A plain `docker/cc` builds that base image
+too, when it is missing. The `FROM` line itself stays as it is. Run a
 plain `docker/cc build` afterwards to go back to the release.
 
 ### Releases
@@ -1014,12 +1023,13 @@ repo's `Dockerfile` must contain is a major version, because each repo has to
 change with it.
 
 CI on GitHub's arm64 runner checks every push to `main` and every pull
-request: shellcheck, the tests and the smoke build. A release happens two ways:
+request: `mise run check` and the smoke build. A release happens two ways:
 
 - Push a tag such as `v1.2.0`. CI checks and builds that commit,
   smoke-tests it, and publishes it to GHCR, the GitHub Container Registry.
   Then it creates the GitHub release. If any step fails, the tag stays
-  without a release, and the weekly rebuild skips it.
+  without a release, and the weekly rebuild skips it. A failure in that last
+  step leaves the image published on GHCR without a release.
 - Each Monday, CI rebuilds the newest release's commit and publishes it as
   the next patch, such as `v1.2.1`. That picks up Claude Code and mise releases
   at least seven days old, newer global tools and Debian's security updates.
