@@ -6,9 +6,9 @@
 #
 # The image that docker/Dockerfile's FROM line names holds the launcher, in
 # /opt/kit. On the first run for each tag, this copies that directory to
-# ~/.cache/claude-container/<tag>, then runs the launcher there. So the FROM
-# line pins the image and the launcher together. The kit's README says what
-# the launcher does.
+# ~/.cache/claude-container/<tag>, or under $XDG_CACHE_HOME when it is set,
+# then runs the launcher there. So the FROM line pins the image and the
+# launcher together. The kit's README says what the launcher does.
 #
 # KIT_DEV, set to the path of a claude-container checkout, runs that
 # checkout's launcher instead.
