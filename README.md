@@ -197,8 +197,9 @@ The cost is the pin. Two machines can run different versions. A new major
 version arrives with no pull request, even when it needs changes to the
 repo's `docker/` files. A repo on `latest` needs the current `stub/cc`. An
 older stub copies the launcher once and never updates it. Each image's
-launcher copy stays under `~/.cache/claude-container`, one folder for each
-image, until you delete it.
+launcher copy goes under `~/.cache/claude-container`, one folder for each
+image. When the stub copies a new launcher, it deletes each older copy whose
+image the Mac no longer has, for example after `docker image prune`.
 
 ### From v1 to v2
 

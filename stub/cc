@@ -6,14 +6,25 @@
 #
 # The image that docker/Dockerfile's FROM line names holds the launcher, in
 # /opt/kit. On the first run for each tag, this copies that directory to
-# ~/.cache/claude-container/<tag>, or under $XDG_CACHE_HOME when it is set,
-# then runs the launcher there. So a FROM line on a fixed tag pins the image
-# and the launcher together. A FROM line on the latest tag gets a copy for
-# each image it pulls. The kit's README says what the launcher does.
+# ~/.cache/claude-container/<tag>, then runs the launcher there. When
+# XDG_CACHE_HOME is set, the copy goes under it instead. So a FROM line on a
+# fixed tag pins the image and the launcher together. A FROM line on the
+# latest tag gets a copy for each image it pulls. The stub deletes that copy
+# once the Mac no longer has its image. The kit's README says what the
+# launcher does.
 #
 # KIT_DEV, set to the path of a claude-container checkout, runs that
 # checkout's launcher instead.
 set -euo pipefail
+
+# Prints the first 12 hex digits of a local image's ID, or fails when the Mac
+# has no such image.
+short_image_id() {
+  local id
+  id=$(docker image inspect --format '{{.Id}}' "$1" 2>/dev/null) || return 1
+  id=${id#sha256:}
+  echo "${id:0:12}"
+}
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 base=$(sed -nE 's#^FROM[[:space:]]+(ghcr\.io/ai-progress-agent/claude-container:[^[:space:]]+).*#\1#p' "$here/Dockerfile" | head -n 1)
@@ -30,43 +41,52 @@ if [ -n "${KIT_DEV:-}" ]; then
 fi
 
 tag=${base#*:}
-key=${tag%%@*}
+cache=${XDG_CACHE_HOME:-$HOME/.cache}/claude-container
+kit_name=${tag%%@*}
 # FROM ...:latest moves, so its kit is cached by the image's ID, not the tag.
 # build and upgrade pull the newest image first. Other runs use the local one,
 # and pull only when the Mac has no copy yet.
 if [ "$tag" = latest ]; then
-  local_id=$(docker image inspect --format '{{.Id}}' "$base" 2>/dev/null) || local_id=
-  if [ -z "$local_id" ] || [ "${1:-}" = build ] || [ "${1:-}" = upgrade ]; then
-    if ! docker pull -q "$base" >/dev/null; then
-      if [ -z "$local_id" ]; then
-        echo "docker/cc: could not pull $base, and there is no local copy" >&2
-        exit 1
-      fi
+  image_id=$(short_image_id "$base") || image_id=
+  if [ -z "$image_id" ] || [ "${1:-}" = build ] || [ "${1:-}" = upgrade ]; then
+    if docker pull -q "$base" >/dev/null; then
+      image_id=$(short_image_id "$base")
+    elif [ -z "$image_id" ]; then
+      echo "docker/cc: could not pull $base, and there is no local copy" >&2
+      exit 1
+    else
       echo "docker/cc: could not pull $base, so this uses the local copy" >&2
     fi
   fi
-  id=$(docker image inspect --format '{{.Id}}' "$base")
-  id=${id#sha256:}
-  key=latest-${id:0:12}
+  kit_name=latest-$image_id
 fi
-kit=${XDG_CACHE_HOME:-$HOME/.cache}/claude-container/$key
+kit=$cache/$kit_name
 if [ ! -x "$kit/cc" ]; then
   # Copy into a new directory, then rename it, so a failed copy leaves no
   # kit behind for the next run to trust. The trap cleans up after a failure
   # or a ctrl-c.
-  mkdir -p "$(dirname "$kit")"
+  mkdir -p "$cache"
   tmp=$(mktemp -d "$kit.XXXXXX")
-  id=
-  trap 'rm -rf "$tmp"; [ -z "$id" ] || docker rm "$id" >/dev/null' EXIT
-  id=$(docker create "$base")
-  docker cp "$id:/opt/kit/." "$tmp"
+  container=
+  trap 'rm -rf "$tmp"; [ -z "$container" ] || docker rm "$container" >/dev/null' EXIT
+  container=$(docker create "$base")
+  docker cp "$container:/opt/kit/." "$tmp"
   # Another run may have finished first. Its kit is the same, so keep it.
   if [ ! -x "$kit/cc" ]; then
     rm -rf "$kit"
     mv "$tmp" "$kit"
   fi
   rm -rf "$tmp"
-  docker rm "$id" >/dev/null
+  docker rm "$container" >/dev/null
   trap - EXIT
+  # A latest-<id> kit is needed only while the Mac still has that image.
+  # A running container keeps its image, so this leaves its kit alone.
+  if [ "$tag" = latest ]; then
+    for old in "$cache"/latest-*; do
+      [[ ${old##*/} =~ ^latest-[0-9a-f]{12}$ ]] || continue
+      [ "$old" != "$kit" ] || continue
+      docker image inspect "${old##*/latest-}" >/dev/null 2>&1 || rm -rf "$old"
+    done
+  fi
 fi
 exec "$kit/cc" "$@"
