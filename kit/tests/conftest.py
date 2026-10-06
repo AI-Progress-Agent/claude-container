@@ -5,14 +5,16 @@ import shutil
 from pathlib import Path
 
 import pytest
-from harness import KIT, NOT_IN_IMAGE, Kit
+from harness import KIT, NOT_IN_IMAGE, STUB, Kit
 
 
 @pytest.fixture(scope="session")
 def image_kit(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """The kit as the image holds it at /opt/kit."""
+    """The kit as the image holds it at /opt/kit, with the stub beside the launcher."""
     dest = tmp_path_factory.mktemp("image") / "kit"
     shutil.copytree(KIT, dest, ignore=shutil.ignore_patterns(*NOT_IN_IMAGE))
+    (dest / "stub").mkdir()
+    shutil.copy2(STUB, dest / "stub" / "cc")
     return dest
 
 

@@ -62,6 +62,8 @@ Three limits apply to `docker/cc.local`:
 
 1. Copy [`stub/cc`](stub/cc) to the repo's `docker/cc`, and keep it
    executable. Do not edit it: the repo's settings go in `docker/kit.toml`.
+   From then on, `docker/cc build` keeps it in step with the image (see
+   [Upgrading](#upgrading)).
 2. Write `docker/Dockerfile` from
    [`example/docker/Dockerfile`](example/docker/Dockerfile). Keep its `FROM`
    line, which follows the newest release:
@@ -154,6 +156,13 @@ newest release as the next patch, with the newest Claude Code and mise that
 are at least seven days old, and moves the `latest` tag to it. To upgrade, run
 `docker/cc build`.
 
+Each image holds the stub of its release. `docker/cc build` and
+`docker/cc upgrade` compare the repo's `docker/cc` with the stub in the image
+that the `FROM` line names. When the two differ, the launcher writes the
+image's stub over `docker/cc` and says so. Commit the new `docker/cc`. When
+the launcher cannot write the file, it warns, and the build goes on with the
+old stub. A plain `docker/cc` and `docker/cc shell` never change the file.
+
 On the `latest` tag, `docker/cc build` and `docker/cc upgrade` pull the newest
 image first, and the stub copies that image's launcher. Other runs use the
 image already on the Mac, and pull only when the Mac has none. When a pull
@@ -164,8 +173,10 @@ The cost of `latest` is that nothing pins the version. Two machines can run
 different versions until each one builds. A new major version arrives with no
 pull request, even when it needs changes to the repo's `docker/` files.
 
-A repo on `latest` needs the current `stub/cc`. An older stub copies the
-launcher once and never updates it. Each image's launcher copy goes under
+A repo on `latest` needs the stub from v2.1.0 or later. That stub copies the
+launcher of each new image, and the launcher then updates the stub. An older
+stub copies the launcher once and never updates it, so copy the current
+`stub/cc` to `docker/cc` by hand once. Each image's launcher copy goes under
 `~/.cache/claude-container`, one folder for each image. When the stub copies a
 new launcher, it deletes each older copy whose image the Mac no longer has,
 for example after `docker image prune`.
@@ -202,10 +213,11 @@ Then ask Dependabot to bump the `FROM` line:
     interval: weekly
 ```
 
-To upgrade, merge Dependabot's pull request and run `docker/cc build`. On a
-fixed tag, neither `docker/cc build` nor `docker/cc upgrade` pulls a new base
-image. So Claude and the base image's tools stay at the versions the `FROM`
-line pins.
+To upgrade, run `docker/cc build` on the branch of Dependabot's pull request.
+When the build updates `docker/cc`, commit it to that branch. Then merge the
+pull request. On a fixed tag, neither `docker/cc build` nor
+`docker/cc upgrade` pulls a new base image. So Claude and the base image's
+tools stay at the versions the `FROM` line pins.
 
 ### From v1 to v2
 
@@ -994,7 +1006,7 @@ The repo has these parts:
 | `Dockerfile` | the base image                                                                                                    |
 | `image/`     | the files the base image installs: the global `mise.toml`, the notification hook, `add-user` and `release-before` |
 | `kit/`       | the launcher and the kit's `compose.yaml`, shipped at `/opt/kit`. A uv project, listed below                      |
-| `stub/cc`    | the `docker/cc` each repo copies                                                                                  |
+| `stub/cc`    | the `docker/cc` each repo copies. The image ships it at `/opt/kit/stub/cc`                                        |
 | `example/`   | a repo layer in miniature, which the smoke test builds                                                            |
 | `test/`      | the smoke test                                                                                                    |
 | `.github/`   | the CI and release workflows, and Dependabot's config (see [Releases](#releases))                                 |
@@ -1045,8 +1057,9 @@ KIT_DEV=../claude-container docker/cc
 The stub then runs the checkout's launcher. `build` and `upgrade` build the
 checkout's base image first, and the repo's image is built on it in place of
 the image the `FROM` line names. A plain `docker/cc` builds that base image
-too, when it is missing. The `FROM` line itself stays as it is. Run a
-plain `docker/cc build` afterwards to go back to the release.
+too, when it is missing. The `FROM` line itself stays as it is, and so does
+`docker/cc`: the checkout's stub may be work in progress. Run a plain
+`docker/cc build` afterwards to go back to the release.
 
 ### Releases
 
