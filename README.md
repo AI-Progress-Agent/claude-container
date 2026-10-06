@@ -35,7 +35,9 @@ The kit has three parts:
   instead of `~/.cache`.
 
 So the `FROM` line in a repo's `docker/Dockerfile` is the one version pin. It
-pins the image and the launcher together.
+pins the image and the launcher together. A repo can name the `latest` tag
+instead, and follow the newest release (see
+[On the `latest` tag](#on-the-latest-tag)).
 
 Settings stack in three levels, and a later level wins:
 
@@ -124,7 +126,8 @@ Three limits apply to `docker/cc.local`:
    mise.local.toml
    ```
 
-7. Ask Dependabot to bump the `FROM` line:
+7. Ask Dependabot to bump the `FROM` line. Skip this step for a repo on
+   the `latest` tag:
 
    ```yaml
    - package-ecosystem: docker
@@ -158,14 +161,15 @@ A new Claude Code comes with a new base image. Each Monday, CI rebuilds the
 newest release as the next patch, with the newest Claude Code and mise that
 are at least seven days old. Dependabot then opens a pull request that moves
 the repo's `FROM` line. To upgrade, merge that pull request and run
-`docker/cc build`.
+`docker/cc build`. A repo on the `latest` tag has no pull request to merge
+(see [On the `latest` tag](#on-the-latest-tag)).
 
 `docker/cc upgrade` rebuilds every step of the repo's `docker/Dockerfile`
-without the cache. It does not pull a new base image. So the repo's apt
-installs move, and so does each tool in the repo's `mise.toml` and your
-`mise.local.toml` whose version is not exact, such as `latest` or
-`node = "22"`. Claude and the base image's tools stay at the versions the
-`FROM` line pins.
+without the cache. So the repo's apt installs move, and so does each tool in
+the repo's `mise.toml` and your `mise.local.toml` whose version is not exact,
+such as `latest` or `node = "22"`. On a fixed tag, it does not pull a new base
+image, so Claude and the base image's tools stay at the versions the `FROM`
+line pins.
 
 Autoupdate is off inside. `claude update` still downloads a new Claude, about
 245 MB, into `~/.local/share/claude`. But that directory goes when the
@@ -190,8 +194,9 @@ runs use the image already on the Mac. So to upgrade, run `docker/cc build`.
 The cost is the pin. Two machines can run different versions. A new major
 version arrives with no pull request, even when it needs changes to the
 repo's `docker/` files. A repo on `latest` needs the current `stub/cc`. An
-older stub copies the launcher once and never updates it. Each image's launcher copy stays under
-`~/.cache/claude-container`, one folder for each image, until you delete it.
+older stub copies the launcher once and never updates it. Each image's
+launcher copy stays under `~/.cache/claude-container`, one folder for each
+image, until you delete it.
 
 ### From v1 to v2
 
