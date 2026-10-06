@@ -1,11 +1,11 @@
 # Claude Code for this repo: the claude-container base image, plus this
 # host's user and this repo's own tools. docker/cc builds and runs it.
 #
-# The FROM line is the one version pin, for the image and for the launcher
-# docker/cc runs. Dependabot moves the tag and the digest together. A real
-# repo pins the digest too, as in
-# FROM ghcr.io/ai-progress-agent/claude-container:v2.0.2@sha256:<digest>.
-FROM ghcr.io/ai-progress-agent/claude-container:v2.0.2
+# The FROM line picks the image and the launcher docker/cc runs. On latest,
+# docker/cc build pulls the newest release. A repo that wants a fixed version
+# pins a tag and digest instead, and Dependabot moves them together, as in
+# FROM ghcr.io/ai-progress-agent/claude-container:v2.1.0@sha256:<digest>.
+FROM ghcr.io/ai-progress-agent/claude-container:latest
 
 # The host's $HOME, user name and repo path. The launcher passes all three.
 ARG HOST_HOME
