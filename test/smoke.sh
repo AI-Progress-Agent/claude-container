@@ -53,5 +53,8 @@ inside '[ -f /opt/kit/src/launcher/main.py ] && [ -f /opt/kit/uv.lock ] && [ -f 
   fail "the Python launcher or its uv project is not in /opt/kit"
 inside '[ ! -e /opt/kit/tests ] && [ ! -e /opt/kit/.venv ]' ||
   fail "/opt/kit holds the tests or a virtual environment"
+# build and upgrade write this copy over a repo's docker/cc.
+inside 'cat /opt/kit/stub/cc' | cmp -s - "$root/stub/cc" ||
+  fail "/opt/kit/stub/cc is not stub/cc"
 
 echo "ok"

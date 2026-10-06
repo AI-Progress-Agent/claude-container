@@ -119,8 +119,10 @@ ENV MISE_HIDE_UPDATE_WARNING=1 \
 
 # The launcher kit. A repo's docker/cc copies this directory to the Mac once
 # per image tag and runs it from there. So the image tag pins the launcher
-# and the image together.
+# and the image together. The kit also holds the stub. build and upgrade
+# write it over a repo's docker/cc when the two differ.
 COPY kit/ /opt/kit/
+COPY stub/cc /opt/kit/stub/cc
 
 LABEL org.opencontainers.image.source=https://github.com/AI-Progress-Agent/claude-container \
       org.opencontainers.image.description="Claude Code in a container that mirrors a Mac's Claude setup" \
