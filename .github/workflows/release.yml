@@ -8,11 +8,10 @@
 #     Debian's security updates. It builds the tag, not main, so a change that
 #     waits on main never ships as a patch.
 #
-# Each repo's Dependabot then opens the pull request that moves its FROM
-# line to the new tag and digest.
-#
 # Each publish also moves the latest tag to its image, when its version is
-# the newest.
+# the newest. A repo on latest gets it at its next docker/cc build. A repo
+# that pins a tag gets a Dependabot pull request that moves its FROM line to
+# the new tag and digest.
 #
 # A GitHub release is created only after its image is published, so the
 # weekly rebuild starts from a release, never from a tag whose publish

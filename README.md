@@ -160,20 +160,20 @@ image already on the Mac, and pull only when the Mac has none. When a pull
 fails, the stub falls back to the local image, or stops with a message if
 there is none.
 
-`docker/cc upgrade` also rebuilds every step of the repo's `docker/Dockerfile`
-without the cache. So the repo's apt installs move, and so does each tool in
-the repo's `mise.toml` and your `mise.local.toml` whose version is not exact,
-such as `latest` or `node = "22"`.
-
-The cost of `latest` is the pin. Two machines can run different versions
-until each one builds. A new major version arrives with no pull request, even
-when it needs changes to the repo's `docker/` files.
+The cost of `latest` is that nothing pins the version. Two machines can run
+different versions until each one builds. A new major version arrives with no
+pull request, even when it needs changes to the repo's `docker/` files.
 
 A repo on `latest` needs the current `stub/cc`. An older stub copies the
 launcher once and never updates it. Each image's launcher copy goes under
 `~/.cache/claude-container`, one folder for each image. When the stub copies a
 new launcher, it deletes each older copy whose image the Mac no longer has,
 for example after `docker image prune`.
+
+`docker/cc upgrade` rebuilds every step of the repo's `docker/Dockerfile`
+without the cache. So the repo's apt installs move, and so does each tool in
+the repo's `mise.toml` and your `mise.local.toml` whose version is not exact,
+such as `latest` or `node = "22"`.
 
 Autoupdate is off inside. `claude update` still downloads a new Claude, about
 245 MB, into `~/.local/share/claude`. But that directory goes when the
@@ -185,9 +185,9 @@ because the image puts Claude at `/usr/local/bin/claude`.
 
 ### Pin a release
 
-A repo that wants every Mac on one version, and each upgrade in a pull
-request, names a release by tag and digest. Each release's notes give the
-line to copy:
+A pinned repo keeps every Mac on one version, and each upgrade comes as a
+pull request. To pin, name a release by tag and digest. Each release's notes
+give the line to copy:
 
 ```dockerfile
 FROM ghcr.io/ai-progress-agent/claude-container:v2.1.0@sha256:<digest>
