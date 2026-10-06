@@ -34,10 +34,10 @@ The kit has three parts:
   the launcher from there. With `XDG_CACHE_HOME` set, the copy goes under it
   instead of `~/.cache`.
 
-So the `FROM` line in a repo's `docker/Dockerfile` is the one version pin. It
-pins the image and the launcher together. A repo can name the `latest` tag
-instead, and follow the newest release (see
-[On the `latest` tag](#on-the-latest-tag)).
+So the `FROM` line in a repo's `docker/Dockerfile` picks the version of both
+the image and the launcher. By default it names the `latest` tag, and the repo
+follows the newest release. A repo can pin a release instead (see
+[Pin a release](#pin-a-release)).
 
 Settings stack in three levels, and a later level wins:
 
@@ -63,12 +63,14 @@ Three limits apply to `docker/cc.local`:
 1. Copy [`stub/cc`](stub/cc) to the repo's `docker/cc`, and keep it
    executable. Do not edit it: the repo's settings go in `docker/kit.toml`.
 2. Write `docker/Dockerfile` from
-   [`example/docker/Dockerfile`](example/docker/Dockerfile). Pin the newest
-   release by tag and digest. Each release's notes give the line to copy:
+   [`example/docker/Dockerfile`](example/docker/Dockerfile). Keep its `FROM`
+   line, which follows the newest release:
 
    ```dockerfile
-   FROM ghcr.io/ai-progress-agent/claude-container:v2.0.0@sha256:<digest>
+   FROM ghcr.io/ai-progress-agent/claude-container:latest
    ```
+
+   To fix the version instead, see [Pin a release](#pin-a-release).
 
    Keep the image name in lower case, as above. The stub looks for that exact
    name, and stops when the `FROM` line has no match.
@@ -126,16 +128,6 @@ Three limits apply to `docker/cc.local`:
    mise.local.toml
    ```
 
-7. Ask Dependabot to bump the `FROM` line. Skip this step for a repo on
-   the `latest` tag:
-
-   ```yaml
-   - package-ecosystem: docker
-     directory: /docker
-     schedule:
-       interval: weekly
-   ```
-
 ## Daily use
 
 | Command             | What it does                                                   |
@@ -159,47 +151,61 @@ Docker volumes and in the Mac paths the container mounts.
 
 A new Claude Code comes with a new base image. Each Monday, CI rebuilds the
 newest release as the next patch, with the newest Claude Code and mise that
-are at least seven days old. Dependabot then opens a pull request that moves
-the repo's `FROM` line. To upgrade, merge that pull request and run
-`docker/cc build`. A repo on the `latest` tag has no pull request to merge
-(see [On the `latest` tag](#on-the-latest-tag)).
+are at least seven days old, and moves the `latest` tag to it. To upgrade, run
+`docker/cc build`.
 
-`docker/cc upgrade` rebuilds every step of the repo's `docker/Dockerfile`
+On the `latest` tag, `docker/cc build` and `docker/cc upgrade` pull the newest
+image first, and the stub copies that image's launcher. Other runs use the
+image already on the Mac, and pull only when the Mac has none. When a pull
+fails, the stub falls back to the local image, or stops with a message if
+there is none.
+
+`docker/cc upgrade` also rebuilds every step of the repo's `docker/Dockerfile`
 without the cache. So the repo's apt installs move, and so does each tool in
 the repo's `mise.toml` and your `mise.local.toml` whose version is not exact,
-such as `latest` or `node = "22"`. On a fixed tag, it does not pull a new base
-image, so Claude and the base image's tools stay at the versions the `FROM`
-line pins.
+such as `latest` or `node = "22"`.
+
+The cost of `latest` is the pin. Two machines can run different versions
+until each one builds. A new major version arrives with no pull request, even
+when it needs changes to the repo's `docker/` files.
+
+A repo on `latest` needs the current `stub/cc`. An older stub copies the
+launcher once and never updates it. Each image's launcher copy goes under
+`~/.cache/claude-container`, one folder for each image. When the stub copies a
+new launcher, it deletes each older copy whose image the Mac no longer has,
+for example after `docker image prune`.
 
 Autoupdate is off inside. `claude update` still downloads a new Claude, about
 245 MB, into `~/.local/share/claude`. But that directory goes when the
-container does, so the next run is back on the pinned version. Upgrade
-through the `FROM` line instead.
+container does, so the next run is back on the image's version. Upgrade with
+`docker/cc build` instead.
 
 `claude doctor` gives warnings about `~/.local/bin`. They are expected,
 because the image puts Claude at `/usr/local/bin/claude`.
 
-### On the `latest` tag
+### Pin a release
 
-A repo can follow the newest release instead of pinning one:
+A repo that wants every Mac on one version, and each upgrade in a pull
+request, names a release by tag and digest. Each release's notes give the
+line to copy:
 
 ```dockerfile
-FROM ghcr.io/ai-progress-agent/claude-container:latest
+FROM ghcr.io/ai-progress-agent/claude-container:v2.1.0@sha256:<digest>
 ```
 
-Then Dependabot has nothing to bump. `docker/cc build` and `docker/cc upgrade`
-pull the newest image first, and the stub copies that image's launcher. Other
-runs use the image already on the Mac, and pull only when the Mac has none.
-When a pull fails, the stub falls back to the local image, or stops with a
-message if there is none. So to upgrade, run `docker/cc build`.
+Then ask Dependabot to bump the `FROM` line:
 
-The cost is the pin. Two machines can run different versions. A new major
-version arrives with no pull request, even when it needs changes to the
-repo's `docker/` files. A repo on `latest` needs the current `stub/cc`. An
-older stub copies the launcher once and never updates it. Each image's
-launcher copy goes under `~/.cache/claude-container`, one folder for each
-image. When the stub copies a new launcher, it deletes each older copy whose
-image the Mac no longer has, for example after `docker image prune`.
+```yaml
+- package-ecosystem: docker
+  directory: /docker
+  schedule:
+    interval: weekly
+```
+
+To upgrade, merge Dependabot's pull request and run `docker/cc build`. On a
+fixed tag, neither `docker/cc build` nor `docker/cc upgrade` pulls a new base
+image. So Claude and the base image's tools stay at the versions the `FROM`
+line pins.
 
 ### From v1 to v2
 
