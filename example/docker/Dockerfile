@@ -18,9 +18,10 @@ RUN /usr/local/libexec/claude-container/add-user "$HOST_USER" "$HOST_HOME"
 
 USER $HOST_USER
 WORKDIR $HOST_HOME
-# The user's mise shims come first, for the repo's own tools, then the base
-# image's. The host's ~/bin comes last. The status line's widgets call scripts
-# there, and the image's cc-notify.mjs has to win over the real one.
+# ~/.local/bin comes first, then the user's mise shims for the repo's own
+# tools, then the base image's. The host's ~/bin comes last. The status line's
+# widgets call scripts there, and the image's cc-notify.mjs has to win over
+# the real one.
 ENV HOME=$HOST_HOME \
     PATH=$HOST_HOME/.local/bin:$HOST_HOME/.local/share/mise/shims:/usr/local/share/mise/shims:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOST_HOME/bin \
     CLAUDE_CONFIG_DIR=$HOST_HOME/.claude
