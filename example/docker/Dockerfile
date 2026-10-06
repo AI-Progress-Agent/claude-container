@@ -4,8 +4,8 @@
 # The FROM line is the one version pin, for the image and for the launcher
 # docker/cc runs. Dependabot moves the tag and the digest together. A real
 # repo pins the digest too, as in
-# FROM ghcr.io/ai-progress-agent/claude-container:v2.0.0@sha256:<digest>.
-FROM ghcr.io/ai-progress-agent/claude-container:v2.0.0
+# FROM ghcr.io/ai-progress-agent/claude-container:v2.0.2@sha256:<digest>.
+FROM ghcr.io/ai-progress-agent/claude-container:v2.0.2
 
 # The host's $HOME, user name and repo path. The launcher passes all three.
 ARG HOST_HOME
