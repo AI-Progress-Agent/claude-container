@@ -1,5 +1,6 @@
 """The stub, stub/cc: it copies the image's kit once per tag and runs it.
-On the latest tag, it copies the kit once per image ID.
+On the latest tag, it copies the kit once per image ID, and deletes the
+copies whose image the Mac no longer has.
 
 Here each kit's launcher is a fake that prints which kit it is and what the
 stub handed it.
@@ -143,3 +144,37 @@ def test_latest_fails_with_a_message_when_there_is_no_image_to_use(kit: Kit, com
     assert run.returncode == 1
     assert f"could not pull {LATEST}, and there is no local copy" in run.stderr
     assert "uses the local copy" not in run.stderr
+
+
+@pytest.mark.usefixtures("fake_kits")
+def test_latest_deletes_the_kits_of_images_the_mac_no_longer_has(kit: Kit) -> None:
+    repo = kit.work / "repo"
+    kit.install(repo, base_image=LATEST)
+    cache = kit.cache / "claude-container"
+    for name in ("latest-aaaaaaaaaaaa", "latest-cccccccccccc", "v1.2.3"):
+        (cache / name).mkdir(parents=True)
+    # Another run's copy in progress, which the stub must leave alone.
+    (cache / "latest-dddddddddddd.Xy12Ab").mkdir()
+    (kit.fake / "kept-ids").write_text("sha256:cccccccccccc3333\n")
+    (kit.fake / "pulled-id").write_text("sha256:bbbbbbbbbbbb2222\n")
+    run = kit.run(repo, "build")
+    assert run.returncode == 0, run.stderr
+    assert sorted(p.name for p in cache.iterdir()) == [
+        "latest-bbbbbbbbbbbb",
+        "latest-cccccccccccc",
+        "latest-dddddddddddd.Xy12Ab",
+        "v1.2.3",
+    ]
+
+
+@pytest.mark.usefixtures("fake_kits")
+def test_latest_keeps_the_other_kits_when_it_copies_none(kit: Kit) -> None:
+    repo = kit.work / "repo"
+    kit.install(repo, base_image=LATEST)
+    (kit.fake / "image-id").write_text("sha256:aaaaaaaaaaaa1111\n")
+    kit.run(repo)
+    old = kit.cache / "claude-container/latest-cccccccccccc"
+    old.mkdir()
+    run = kit.run(repo)
+    assert run.returncode == 0, run.stderr
+    assert old.is_dir()
