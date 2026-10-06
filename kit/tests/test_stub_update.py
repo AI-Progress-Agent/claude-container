@@ -15,6 +15,7 @@ import pytest
 from harness import STUB, Kit
 
 STUB_UPDATED = "docker/cc: updated docker/cc to this image's stub; commit it"
+STUB_NOT_UPDATED = "docker/cc: could not update docker/cc to this image's stub, so the build goes on with it as it is"
 STALE = STUB.read_text() + "# an older stub\n"
 
 
@@ -78,7 +79,6 @@ def test_a_kit_without_a_stub_leaves_docker_cc_alone(kit: Kit, image_kit: Path) 
     assert len(run.compose_calls("build")) == 1
 
 
-# root writes into a read-only folder.
 @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores the folder's mode")
 def test_a_docker_cc_the_launcher_cannot_write_warns_and_builds(kit: Kit) -> None:
     repo, stub = _repo_with_stale_stub(kit)
@@ -89,13 +89,23 @@ def test_a_docker_cc_the_launcher_cannot_write_warns_and_builds(kit: Kit) -> Non
     finally:
         docker.chmod(0o755)
     assert run.returncode == 0, run.stderr
-    assert (
-        "docker/cc: could not update docker/cc to this image's stub, so the build goes on with it as it is"
-        in run.lines()
-    )
+    assert STUB_NOT_UPDATED in run.lines()
     assert stub.read_text() == STALE
     # No temporary file is left beside it.
     assert sorted(p.name for p in docker.iterdir()) == ["Dockerfile", "cc"]
+    assert len(run.compose_calls("build")) == 1
+
+
+def test_a_kit_stub_the_launcher_cannot_read_warns_and_builds(kit: Kit, image_kit: Path) -> None:
+    broken = kit.work / "broken-kit"
+    shutil.copytree(image_kit, broken, ignore=shutil.ignore_patterns("stub"))
+    (broken / "stub" / "cc").mkdir(parents=True)
+    kit.env["IMAGE_KIT"] = str(broken)
+    repo, stub = _repo_with_stale_stub(kit)
+    run = kit.run(repo, "build")
+    assert run.returncode == 0, run.stderr
+    assert STUB_NOT_UPDATED in run.lines()
+    assert stub.read_text() == STALE
     assert len(run.compose_calls("build")) == 1
 
 
