@@ -9,8 +9,8 @@ docker, gh and chflags commands go first on the PATH:
   compose run` runs the test's run hook, which stands in for the container.
   `docker image inspect --format` prints the image ID in the file image-id.
   `docker pull` replaces that file with pulled-id, when there is one, and
-  fails when the file pull-fails exists. `docker image inspect` by a short
-  image ID finds the ID in image-id or in the file kept-ids.
+  fails when the file pull-fails exists. `docker image ls` prints the IDs in
+  image-id and in the file kept-ids, and fails when image-ls-fails exists.
 - gh prints a token.
 - chflags keeps each flagged file as a line in a file, since Linux has no
   chflags. The launcher must call it by name, as `chflags uchg FILE`.
@@ -157,9 +157,11 @@ def main():
             if not (fake / "image-id").exists():
                 return 1
             print((fake / "image-id").read_text().strip())
-        case ["image", "inspect", ref] if ":" not in ref:
+        case ["image", "ls", *_]:
+            if (fake / "image-ls-fails").exists():
+                return 1
             ids = (lines(fake / "image-id") or []) + (lines(fake / "kept-ids") or [])
-            return 0 if any(i.startswith("sha256:" + ref) for i in ids) else 1
+            print("\\n".join(ids))
         case ["image", "inspect", *_]:
             return 1 if (fake / "no-dev-image").exists() else 0
         case ["compose", *rest]:

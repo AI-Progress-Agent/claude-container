@@ -178,3 +178,16 @@ def test_latest_keeps_the_other_kits_when_it_copies_none(kit: Kit) -> None:
     run = kit.run(repo)
     assert run.returncode == 0, run.stderr
     assert old.is_dir()
+
+
+@pytest.mark.usefixtures("fake_kits")
+def test_latest_deletes_nothing_when_docker_cannot_list_images(kit: Kit) -> None:
+    repo = kit.work / "repo"
+    kit.install(repo, base_image=LATEST)
+    old = kit.cache / "claude-container/latest-aaaaaaaaaaaa"
+    old.mkdir(parents=True)
+    (kit.fake / "image-ls-fails").touch()
+    (kit.fake / "pulled-id").write_text("sha256:bbbbbbbbbbbb2222\n")
+    run = kit.run(repo, "build")
+    assert run.returncode == 0, run.stderr
+    assert old.is_dir()
