@@ -63,9 +63,9 @@ def main(argv: list[str] | None = None) -> int:
             exec_compose([*compose, "build", *args[1:]], os.environ)
         # A plain build reuses each cached layer, so nothing the repo's mise
         # config installs as "latest" ever moves. This skips the cache.
-        # Claude and the base image's tools move only with a new base image:
-        # merge the pull request that bumps the FROM line, then build. On the
-        # latest tag, the stub pulls the new base image before this runs.
+        # Claude and the base image's tools move only with a new base image.
+        # On a fixed tag, move the FROM line to a new release, then build. On
+        # the latest tag, the stub pulls the newest base image before this runs.
         case ["upgrade"]:
             _build_dev_base(dev)
             exec_compose([*compose, "build", "--no-cache", *args[1:]], os.environ)
