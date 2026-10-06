@@ -9,9 +9,9 @@
 # ~/.cache/claude-container/<tag>, then runs the launcher there. When
 # XDG_CACHE_HOME is set, the copy goes under it instead. So a FROM line on a
 # fixed tag pins the image and the launcher together. A FROM line on the
-# latest tag gets a copy for each image it pulls. The stub deletes that copy
-# once the Mac no longer has its image. The kit's README says what the
-# launcher does.
+# latest tag gets a copy for each image it pulls. Each time the stub makes a
+# new copy, it deletes the older copies whose image the Mac no longer has.
+# The kit's README says what the launcher does.
 #
 # KIT_DEV, set to the path of a claude-container checkout, runs that
 # checkout's launcher instead.
@@ -80,12 +80,17 @@ if [ ! -x "$kit/cc" ]; then
   docker rm "$container" >/dev/null
   trap - EXIT
   # A latest-<id> kit is needed only while the Mac still has that image.
-  # A running container keeps its image, so this leaves its kit alone.
-  if [ "$tag" = latest ]; then
+  # A running container keeps its image, so this leaves its kit alone. When
+  # docker cannot list the images, this deletes nothing.
+  if [ "$tag" = latest ] && images=$(docker image ls -aq --no-trunc 2>/dev/null); then
     for old in "$cache"/latest-*; do
-      [[ ${old##*/} =~ ^latest-[0-9a-f]{12}$ ]] || continue
+      old_id=${old##*/latest-}
+      [[ $old_id =~ ^[0-9a-f]{12}$ ]] || continue
       [ "$old" != "$kit" ] || continue
-      docker image inspect "${old##*/latest-}" >/dev/null 2>&1 || rm -rf "$old"
+      case $images in
+        *"sha256:$old_id"*) ;;
+        *) rm -rf "$old" ;;
+      esac
     done
   fi
 fi
