@@ -141,38 +141,41 @@ def _update_stub(dev: str | None, docker_dir: str) -> None:
     line execs the launcher, so bash reads no more of the old file.
 
     Under KIT_DEV this does nothing: a checkout's stub may be work in
-    progress. It also does nothing for an image from before the kit held
-    the stub. A stale stub still runs the launcher. So a failed write only
-    warns, and the build goes on.
+    progress. A stale stub still runs the launcher. So a failed read or
+    write only warns, and the build goes on.
     """
     if dev:
         return
-    try:
-        with open(f"{KIT}/stub/cc", "rb") as file:
-            stub = file.read()
-    except FileNotFoundError:
+    source = f"{KIT}/stub/cc"
+    # An image from before the kit held the stub.
+    if not os.path.lexists(source):
         return
     target = f"{docker_dir}/cc"
     try:
-        with open(target, "rb") as file:
-            if file.read() == stub:
-                return
-        fd, tmp = tempfile.mkstemp(prefix=".cc.", dir=docker_dir)
-        try:
-            with os.fdopen(fd, "wb") as out:
-                out.write(stub)
-            os.chmod(tmp, 0o755)
-            os.replace(tmp, target)
-        except OSError:
-            with contextlib.suppress(OSError):
-                os.unlink(tmp)
-            raise
+        stub = Path(source).read_bytes()
+        if Path(target).read_bytes() == stub:
+            return
+        _replace_executable(target, stub)
     except OSError:
         say(
             "docker/cc: could not update docker/cc to this image's stub, so the build goes on with it as it is"
         )
         return
     say("docker/cc: updated docker/cc to this image's stub; commit it")
+
+
+def _replace_executable(path: str, data: bytes) -> None:
+    """Writes data to a temporary file beside path, then renames it over path."""
+    fd, tmp = tempfile.mkstemp(prefix=".cc.", dir=os.path.dirname(path))
+    try:
+        with os.fdopen(fd, "wb") as out:
+            out.write(data)
+        os.chmod(tmp, 0o755)
+        os.replace(tmp, path)
+    except OSError:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
 
 
 def _has_image(image: str) -> bool:
