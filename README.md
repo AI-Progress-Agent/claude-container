@@ -189,7 +189,9 @@ FROM ghcr.io/ai-progress-agent/claude-container:latest
 
 Then Dependabot has nothing to bump. `docker/cc build` and `docker/cc upgrade`
 pull the newest image first, and the stub copies that image's launcher. Other
-runs use the image already on the Mac. So to upgrade, run `docker/cc build`.
+runs use the image already on the Mac, and pull only when the Mac has none.
+When a pull fails, the stub falls back to the local image, or stops with a
+message if there is none. So to upgrade, run `docker/cc build`.
 
 The cost is the pin. Two machines can run different versions. A new major
 version arrives with no pull request, even when it needs changes to the

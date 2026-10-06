@@ -133,13 +133,13 @@ def test_latest_build_uses_the_local_image_when_the_pull_fails(kit: Kit) -> None
     assert (kit.cache / "claude-container/latest-aaaaaaaaaaaa/cc").is_file()
 
 
-@pytest.mark.parametrize("command", ["shell", "build"])
+@pytest.mark.parametrize("command", ["shell", "build", "upgrade"])
 @pytest.mark.usefixtures("fake_kits")
 def test_latest_fails_with_a_message_when_there_is_no_image_to_use(kit: Kit, command: str) -> None:
     repo = kit.work / "repo"
     kit.install(repo, base_image=LATEST)
     (kit.fake / "pull-fails").touch()
     run = kit.run(repo, command)
-    assert run.returncode != 0
+    assert run.returncode == 1
     assert f"could not pull {LATEST}, and there is no local copy" in run.stderr
     assert "uses the local copy" not in run.stderr
