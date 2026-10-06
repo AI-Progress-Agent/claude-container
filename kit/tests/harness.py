@@ -7,6 +7,9 @@ docker, gh and chflags commands go first on the PATH:
   that moment. `docker cp` copies the kit as the image holds it. `docker
   compose config` prints the bind mounts that compose.yaml makes. `docker
   compose run` runs the test's run hook, which stands in for the container.
+  `docker image inspect --format` prints the image ID in the file image-id.
+  `docker pull` replaces that file with pulled-id, when there is one, and
+  fails when the file pull-fails exists.
 - gh prints a token.
 - chflags keeps each flagged file as a line in a file, since Linux has no
   chflags. The launcher must call it by name, as `chflags uchg FILE`.
@@ -144,6 +147,15 @@ def main():
             print("container-id")
         case ["cp", _, dest]:
             shutil.copytree(os.environ["IMAGE_KIT"], dest, dirs_exist_ok=True)
+        case ["pull", *_]:
+            if (fake / "pull-fails").exists():
+                return 1
+            if (fake / "pulled-id").exists():
+                (fake / "pulled-id").replace(fake / "image-id")
+        case ["image", "inspect", "--format", _, *_]:
+            if not (fake / "image-id").exists():
+                return 1
+            print((fake / "image-id").read_text().strip())
         case ["image", "inspect", *_]:
             return 1 if (fake / "no-dev-image").exists() else 0
         case ["compose", *rest]:

@@ -1,4 +1,5 @@
 """The stub, stub/cc: it copies the image's kit once per tag and runs it.
+On the latest tag, it copies the kit once per image ID.
 
 Here each kit's launcher is a fake that prints which kit it is and what the
 stub handed it.
@@ -79,3 +80,54 @@ def test_another_base_image_stops_the_stub_before_docker(kit: Kit) -> None:
     assert run.returncode != 0
     assert "has no FROM ghcr.io/ai-progress-agent/claude-container:<tag> line" in run.stderr
     assert run.calls == []
+
+
+LATEST = "ghcr.io/ai-progress-agent/claude-container:latest"
+
+
+@pytest.mark.usefixtures("fake_kits")
+def test_latest_caches_the_kit_by_the_images_id(kit: Kit) -> None:
+    repo = kit.work / "repo"
+    kit.install(repo, base_image=LATEST)
+    (kit.fake / "image-id").write_text("sha256:aaaaaaaaaaaa1111\n")
+    run = kit.run(repo)
+    assert run.returncode == 0, run.stderr
+    assert (kit.cache / "claude-container/latest-aaaaaaaaaaaa/cc").is_file()
+    assert not any(c.argv[0] == "pull" for c in run.calls)
+
+
+@pytest.mark.usefixtures("fake_kits")
+def test_latest_pulls_when_the_image_is_missing(kit: Kit) -> None:
+    repo = kit.work / "repo"
+    kit.install(repo, base_image=LATEST)
+    (kit.fake / "pulled-id").write_text("sha256:bbbbbbbbbbbb2222\n")
+    run = kit.run(repo)
+    assert run.returncode == 0, run.stderr
+    assert ["pull", "-q", LATEST] in [c.argv for c in run.calls]
+    assert (kit.cache / "claude-container/latest-bbbbbbbbbbbb/cc").is_file()
+
+
+@pytest.mark.parametrize("command", ["build", "upgrade"])
+@pytest.mark.usefixtures("fake_kits")
+def test_latest_build_pulls_and_copies_the_new_images_kit(kit: Kit, command: str) -> None:
+    repo = kit.work / "repo"
+    kit.install(repo, base_image=LATEST)
+    (kit.fake / "image-id").write_text("sha256:aaaaaaaaaaaa1111\n")
+    kit.run(repo)
+    (kit.fake / "pulled-id").write_text("sha256:bbbbbbbbbbbb2222\n")
+    run = kit.run(repo, command)
+    assert run.returncode == 0, run.stderr
+    assert run.stdout.startswith(f"image {repo / 'docker'} {LATEST}  {command}")
+    assert (kit.cache / "claude-container/latest-bbbbbbbbbbbb/cc").is_file()
+
+
+@pytest.mark.usefixtures("fake_kits")
+def test_latest_build_uses_the_local_image_when_the_pull_fails(kit: Kit) -> None:
+    repo = kit.work / "repo"
+    kit.install(repo, base_image=LATEST)
+    (kit.fake / "image-id").write_text("sha256:aaaaaaaaaaaa1111\n")
+    (kit.fake / "pull-fails").touch()
+    run = kit.run(repo, "build")
+    assert run.returncode == 0, run.stderr
+    assert "could not pull" in run.stderr
+    assert (kit.cache / "claude-container/latest-aaaaaaaaaaaa/cc").is_file()

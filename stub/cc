@@ -8,7 +8,8 @@
 # /opt/kit. On the first run for each tag, this copies that directory to
 # ~/.cache/claude-container/<tag>, or under $XDG_CACHE_HOME when it is set,
 # then runs the launcher there. So the FROM line pins the image and the
-# launcher together. The kit's README says what the launcher does.
+# launcher together. A FROM line on the latest tag gets a copy for each image
+# it pulls. The kit's README says what the launcher does.
 #
 # KIT_DEV, set to the path of a claude-container checkout, runs that
 # checkout's launcher instead.
@@ -29,7 +30,22 @@ if [ -n "${KIT_DEV:-}" ]; then
 fi
 
 tag=${base#*:}
-kit=${XDG_CACHE_HOME:-$HOME/.cache}/claude-container/${tag%%@*}
+key=${tag%%@*}
+# FROM ...:latest moves, so its kit is cached by the image's ID, not the tag.
+# build and upgrade pull the newest image first. Other runs use the local one.
+if [ "$tag" = latest ]; then
+  if [ "${1:-}" = build ] || [ "${1:-}" = upgrade ]; then
+    docker pull -q "$base" >/dev/null ||
+      echo "docker/cc: could not pull $base, so this uses the local copy" >&2
+  fi
+  id=$(docker image inspect --format '{{.Id}}' "$base" 2>/dev/null) || {
+    docker pull -q "$base" >/dev/null
+    id=$(docker image inspect --format '{{.Id}}' "$base")
+  }
+  id=${id#sha256:}
+  key=latest-${id:0:12}
+fi
+kit=${XDG_CACHE_HOME:-$HOME/.cache}/claude-container/$key
 if [ ! -x "$kit/cc" ]; then
   # Copy into a new directory, then rename it, so a failed copy leaves no
   # kit behind for the next run to trust. The trap cleans up after a failure

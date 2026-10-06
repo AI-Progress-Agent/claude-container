@@ -11,6 +11,9 @@
 # Each repo's Dependabot then opens the pull request that moves its FROM
 # line to the new tag and digest.
 #
+# Each publish also moves the latest tag to its image, when its version is
+# the newest.
+#
 # A GitHub release is created only after its image is published, so the
 # weekly rebuild starts from a release, never from a tag whose publish
 # failed. The checks and the smoke test run before anything is published.
@@ -96,6 +99,13 @@ jobs:
           docker tag claude-container:dev "$IMAGE:$VERSION"
           docker push "$IMAGE:$VERSION"
           ref=$(docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE:$VERSION")
+          # latest moves only forward, so a tag pushed for an older line
+          # leaves it alone.
+          newest=$({ git tag -l 'v*'; echo "$VERSION"; } | sort -V | tail -n 1)
+          if [ "$newest" = "$VERSION" ]; then
+            docker tag claude-container:dev "$IMAGE:latest"
+            docker push "$IMAGE:latest"
+          fi
           fence='```'
           notes=$(printf 'Claude Code %s, mise %s.\n\nA repo pins this release with this line in docker/Dockerfile:\n\n%sdockerfile\nFROM %s:%s@%s\n%s\n' \
             "$CLAUDE" "$MISE" "$fence" "$IMAGE" "$VERSION" "${ref#*@}" "$fence")

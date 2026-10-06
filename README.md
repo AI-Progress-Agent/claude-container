@@ -175,6 +175,24 @@ through the `FROM` line instead.
 `claude doctor` gives warnings about `~/.local/bin`. They are expected,
 because the image puts Claude at `/usr/local/bin/claude`.
 
+### On the `latest` tag
+
+A repo can follow the newest release instead of pinning one:
+
+```dockerfile
+FROM ghcr.io/ai-progress-agent/claude-container:latest
+```
+
+Then Dependabot has nothing to bump. `docker/cc build` and `docker/cc upgrade`
+pull the newest image first, and the stub copies that image's launcher. Other
+runs use the image already on the Mac. So to upgrade, run `docker/cc build`.
+
+The cost is the pin. Two machines can run different versions. A new major
+version arrives with no pull request, even when it needs changes to the
+repo's `docker/` files. A repo on `latest` needs the current `stub/cc`. An
+older stub copies the launcher once and never updates it. Each image's launcher copy stays under
+`~/.cache/claude-container`, one folder for each image, until you delete it.
+
 ### From v1 to v2
 
 v2 replaces the bash launcher with a Python one. Two things change for a
@@ -1036,6 +1054,8 @@ request: `mise run check` and the smoke build. A release happens two ways:
   It builds the tag, not `main`, so a change waiting on `main` never ships as
   a patch. Running the `release` workflow by hand from the Actions tab does
   the same at once.
+
+Each publish also moves the `latest` tag, when its version is the newest.
 
 Dependabot bumps the base `Dockerfile`'s Debian digest each week and the
 pinned GitHub Actions each month, each after a seven-day wait.
