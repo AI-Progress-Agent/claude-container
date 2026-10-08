@@ -44,8 +44,37 @@ jobs:
     name: build and smoke test
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
+    # A throwaway registry, so each pull request pushes the image the way the
+    # release job does. Dependabot does not read this pin. Bump it by hand.
+    services:
+      registry:
+        image: registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+        ports: ["5000:5000"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - run: test/smoke.sh
+
+      # The release job's push, with its login, against the local registry.
+      # Every layer must arrive as zstd, both tags must share one digest, and
+      # the image must pull back and run.
+      - name: Push as the release job does, then pull back
+        env:
+          TLS_VERIFY: "false"
+          REF: localhost:5000/claude-container
+        run: |
+          echo ci | docker login localhost:5000 -u ci --password-stdin
+          digest=$(.github/push-image claude-container:dev "$REF:ci" latest)
+          accept='Accept: application/vnd.oci.image.manifest.v1+json'
+          url=http://localhost:5000/v2/claude-container/manifests
+          curl -fsS -H "$accept" "$url/ci" |
+            jq -e '.layers | length > 0 and all(.mediaType | endswith("+zstd"))' >/dev/null ||
+            { echo "a layer is not zstd" >&2; exit 1; }
+          for tag in ci latest; do
+            got=$(curl -fsS -o /dev/null -D - -H "$accept" "$url/$tag" |
+              sed -n 's/^docker-content-digest: *//Ip' | tr -d '\r')
+            [ "$got" = "$digest" ] || { echo "$tag is $got, not $digest" >&2; exit 1; }
+          done
+          docker pull "$REF@$digest"
+          docker run --rm "$REF@$digest" sh -c 'claude --version && agent-browser --version'

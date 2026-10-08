@@ -95,17 +95,16 @@ jobs:
           MISE: ${{ steps.tools.outputs.mise }}
         run: |
           printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          docker tag claude-container:dev "$IMAGE:$VERSION"
-          docker push "$IMAGE:$VERSION"
-          ref=$(docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE:$VERSION")
           # latest moves only forward, so a tag pushed for an older line
           # leaves it alone.
           newest=$({ git tag -l 'v*'; echo "$VERSION"; } | sort -V | tail -n 1)
+          also=()
           if [ "$newest" = "$VERSION" ]; then
-            docker tag claude-container:dev "$IMAGE:latest"
-            docker push "$IMAGE:latest"
+            also=(latest)
           fi
+          # Push the image the smoke test checked, with zstd layers.
+          digest=$(.github/push-image claude-container:dev "$IMAGE:$VERSION" "${also[@]}")
           fence='```'
           notes=$(printf 'Claude Code %s, mise %s.\n\nA repo pins this release with this line in docker/Dockerfile:\n\n%sdockerfile\nFROM %s:%s@%s\n%s\n' \
-            "$CLAUDE" "$MISE" "$fence" "$IMAGE" "$VERSION" "${ref#*@}" "$fence")
+            "$CLAUDE" "$MISE" "$fence" "$IMAGE" "$VERSION" "$digest" "$fence")
           gh release create "$VERSION" --target "$COMMIT" --title "$VERSION" --notes "$notes"

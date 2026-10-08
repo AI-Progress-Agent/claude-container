@@ -20,7 +20,7 @@ depends = ["check:shell", "check:python"]
 # Add a new shell script here.
 [tasks."check:shell"]
 description = "Run shellcheck over the kit's shell scripts"
-run = "shellcheck -x kit/cc kit/cc-local.bash stub/cc image/add-user image/release-before image/cc-forward-notify test/smoke.sh"
+run = "shellcheck -x kit/cc kit/cc-local.bash stub/cc image/add-user image/release-before image/cc-forward-notify test/smoke.sh .github/push-image"
 
 # The Python project in kit/: ruff, basedpyright in strict mode, and the
 # pytest tests. Most run the launcher through the stub with a fake docker.
