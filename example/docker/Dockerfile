@@ -28,7 +28,8 @@ ENV HOME=$HOST_HOME \
 
 # The repo's own mise.toml is the one list of its tool versions. Install
 # them into the image so a run never waits for a download. mise reuses each
-# tool the base image already has. Rebuild after mise.toml changes.
+# tool the base image already has. Rebuild after mise.toml changes. mise's
+# download cache goes in the same step, so the image never holds it.
 #
 # mise.local.toml adds this machine's own tools. It is not committed, so the
 # bracket makes the COPY match nothing on a clone without one, rather than
@@ -36,4 +37,4 @@ ENV HOME=$HOST_HOME \
 COPY --chown=$HOST_USER mise.toml mise.local.tom[l] /tmp/repo/
 RUN cd /tmp/repo \
  && MISE_TRUSTED_CONFIG_PATHS=/tmp/repo mise install \
- && rm -rf /tmp/repo
+ && rm -rf /tmp/repo "$HOME/.cache/mise"
