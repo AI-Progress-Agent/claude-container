@@ -105,13 +105,33 @@ ENV DISABLE_AUTOUPDATER=1
 # agent-browser ships its platform binary without the execute bit, and sets
 # the bit on first run. A user who does not own the file cannot set it, so
 # set it here.
+#
+# Size counts more than build time here, so mise, its install and the
+# cleanup share one RUN, and no layer keeps what the cleanup removes:
+#   - root's download cache, which the user never reads
+#   - agent-browser's binaries for other platforms
+#   - Node's C headers. Only node-gyp reads them, the image has no compiler,
+#     and node-gyp downloads them itself when a repo adds one.
+#   - debug symbols, which strip removes with binutils installed only for
+#     the purpose. Claude is a download of its own, and stays as it is.
 ARG MISE_VERSION=
+COPY image/mise.toml /etc/mise/config.toml
 RUN set -eu; \
     v=${MISE_VERSION:-$(/usr/local/libexec/claude-container/release-before @jdxcode/mise 7)}; \
-    curl -fsSL https://mise.run | MISE_VERSION="v$v" MISE_INSTALL_PATH=/usr/local/bin/mise sh
-COPY image/mise.toml /etc/mise/config.toml
-RUN MISE_SYSTEM_PACKAGES_SUDO=false mise install --system \
- && chmod a+x "$(mise where npm:agent-browser)"/node_modules/.mise/agent-browser@*/node_modules/agent-browser/bin/agent-browser-linux-*
+    curl -fsSL https://mise.run | MISE_VERSION="v$v" MISE_INSTALL_PATH=/usr/local/bin/mise sh; \
+    MISE_SYSTEM_PACKAGES_SUDO=false mise install --system; \
+    set -- "$(mise where npm:agent-browser)"/node_modules/.mise/agent-browser@*/node_modules/agent-browser/bin; \
+    find "$1" -name 'agent-browser-*' ! -name agent-browser-linux-arm64 -delete; \
+    chmod a+x "$1/agent-browser-linux-arm64"; \
+    rm -rf "$(mise where node)/include" /root/.cache; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends binutils; \
+    find /usr/local/bin/mise /usr/local/share/mise/installs -type f -size +100k -exec sh -ec ' \
+      for f; do \
+        if readelf -S "$f" 2>/dev/null | grep -q "\.symtab"; then strip --strip-unneeded "$f"; fi; \
+      done' sh {} +; \
+    apt-get purge -y --auto-remove binutils; \
+    rm -rf /var/lib/apt/lists/*
 # mise would warn about its own newer release on every call. A new mise
 # comes with a new base image, so the warning is noise here.
 ENV MISE_HIDE_UPDATE_WARNING=1 \

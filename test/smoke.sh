@@ -41,6 +41,11 @@ echo "claude: $out"
 [ "$(inside 'echo $HOME')" = "$HOME" ] || fail "the home is not $HOME"
 inside 'which node' | grep -qx /usr/local/share/mise/shims/node ||
   fail "node is not the base image's: $(inside 'which node')"
+# The base image strips these tools and removes parts of them. Each must
+# still run.
+for tool in mise node python3 uv ruff ast-grep prettier pyright; do
+  inside "$tool --version" >/dev/null || fail "$tool does not run"
+done
 inside 'shellcheck --version' >/dev/null || fail "the repo's shellcheck does not run"
 inside '! touch /usr/local/share/mise/installs/x 2>/dev/null' ||
   fail "the user can write the base image's tools"
