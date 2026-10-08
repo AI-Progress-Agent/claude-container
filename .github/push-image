@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Pushes local image $1 to registry reference $2, and prints the digest the
+# registry gives it. Each further argument is another tag in $2's repository
+# that gets the same image, with the same digest.
+#
+# docker push sends gzip layers. skopeo sends each layer as zstd at level
+# 19, which cuts the download by about a sixth. skopeo runs from its own
+# image, with the login docker login wrote in $DOCKER_CONFIG or ~/.docker.
+# The release job publishes with this script, and CI runs it against a local
+# registry, with TLS_VERIFY=false, on every pull request.
+set -euo pipefail
+
+# Dependabot does not read this pin. Bump the tag and the digest by hand.
+skopeo=quay.io/skopeo/stable:v1.20.0@sha256:47853bb9fb24202af9110531ebd6e43c5f97701254ca290596640290d17942f4
+
+src=$1
+dest=$2
+shift 2
+
+sock=$(docker context inspect --format '{{.Endpoints.docker.Host}}')
+out=$(mktemp -d)
+trap 'rm -rf "$out"' EXIT
+
+copy() {
+  docker run --rm --network host \
+    -v "${sock#unix://}:/var/run/docker.sock" \
+    -v "${DOCKER_CONFIG:-$HOME/.docker}/config.json:/auth.json:ro" -v "$out:/out" \
+    "$skopeo" copy --authfile /auth.json \
+    --src-tls-verify="${TLS_VERIFY:-true}" --dest-tls-verify="${TLS_VERIFY:-true}" "$@" >&2
+}
+
+copy --format oci --dest-compress-format zstd --dest-compress-level 19 \
+  --digestfile /out/digest "docker-daemon:$src" "docker://$dest"
+for tag in "$@"; do
+  copy --preserve-digests "docker://$dest" "docker://${dest%:*}:$tag"
+done
+cat "$out/digest"
