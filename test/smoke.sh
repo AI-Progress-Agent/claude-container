@@ -2,9 +2,10 @@
 # Builds the base image as claude-container:dev, then the example repo's
 # layer on it for this machine's user, and checks what that user sees inside:
 # Claude runs, the base image's tools run but cannot be changed, the repo's
-# own tool installs for the user, and gh-stack and agent-browser work for a
-# user who does not own them. It runs the container as compose.yaml does, with
-# no capabilities. It needs Docker, and removes the example's image after.
+# own tools install for the user, the user can move a base image tool to
+# another version, and gh-stack and agent-browser work for a user who does
+# not own them. It runs the container as compose.yaml does, with no
+# capabilities. It needs Docker, and removes the example's image after.
 #
 # Extra arguments go to the base image's docker build, such as
 # --build-arg CLAUDE_VERSION=2.1.283.
@@ -47,6 +48,10 @@ for tool in mise node python3 uv ruff ast-grep prettier pyright; do
   inside "$tool --version" >/dev/null || fail "$tool does not run"
 done
 inside 'shellcheck --version' >/dev/null || fail "the repo's shellcheck does not run"
+# Moving a base image tool to another version in the user's global config
+# makes mise rebuild that tool's version links in the base image's folders.
+inside 'cd /tmp && mise use -g python@3.13 >/dev/null && python3 --version' |
+  grep -q '^Python 3\.13\.' || fail "the user cannot move Python to 3.13"
 inside '! touch /usr/local/share/mise/installs/x 2>/dev/null' ||
   fail "the user can write the base image's tools"
 inside 'gh stack --help' >/dev/null || fail "gh stack does not run"
