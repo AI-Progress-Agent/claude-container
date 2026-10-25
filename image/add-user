@@ -28,3 +28,12 @@ printf 'owner: github\nname: gh-stack\nhost: github.com\ntag: %s\nispinned: true
 
 mkdir -p "$home/.claude/projects" "$home/.claude/state" "$home/.config" "$@"
 chown -R "$user:" "$home" "$@"
+
+# Each tool's folder under the base image's mise installs holds version
+# links, such as lts and global. When the user installs a version that moves
+# one, such as a newer Node 24 or a global Python 3.13, mise rebuilds that
+# tool's links. A root-owned folder makes mise reach for sudo, which the
+# image lacks, and the install fails. The user owns each tool's folder, but
+# not the installs folder or the files inside, so the base image's tools stay
+# unchanged and no layer copies them.
+chown "$user:" /usr/local/share/mise/installs/*
