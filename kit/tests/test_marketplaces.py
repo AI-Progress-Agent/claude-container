@@ -48,6 +48,8 @@ def test_only_folders_the_container_does_not_see_mount(kit: Kit, repo: Path) -> 
         "in-compose": kit.work / "dotfiles/m",
         # The login's volume holds none of the Mac's files.
         "in-volume": kit.home / ".claude/m",
+        # Each start copies the plugins folder inside.
+        "in-plugins": kit.home / ".claude/plugins/m",
         "a-nested": mp / "mine/inner",
         "mine": mp / "mine",
         "client": mp / "client",

@@ -24,10 +24,11 @@ def collect_marketplaces(
 
     A marketplace named in skip_marketplaces stays out, such as one that
     belongs to another client. So does a folder the container already sees.
-    That is a folder at or under the repo or a sibling repo. It is also one
-    at or under a bind mount in any compose file, compose.local.yaml among
-    them. compose_binds gives those. A second mount there adds nothing. Under
-    a writable mount, it would turn the folder read-only.
+    That is a folder at or under the repo, a sibling repo, or the plugins
+    folder, which the start copies inside. It is also one at or under a bind
+    mount in any compose file, compose.local.yaml among them. compose_binds
+    gives those. A second mount there adds nothing. Under a writable mount,
+    it would turn the folder read-only.
     """
     known = f"{home}/.claude/plugins/known_marketplaces.json"
     settings = f"{home}/.claude/settings.json"
@@ -40,7 +41,8 @@ def collect_marketplaces(
             "so no folder marketplace mounted"
         )
         return
-    visible = [draft.repo, *(m.target for m in draft.mounts)]
+    # The start copies the Mac's plugins folder to its own path inside.
+    visible = [draft.repo, f"{home}/.claude/plugins", *(m.target for m in draft.mounts)]
     compose_read = False
     mounted: list[str] = []
     skipped: list[str] = []

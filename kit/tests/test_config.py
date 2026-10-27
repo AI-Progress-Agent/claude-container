@@ -301,6 +301,54 @@ def test_host_config_mounts_read_only_at_its_own_path(kit: Kit) -> None:
     ]
 
 
+def test_plugins_mount_aside_and_each_start_copies_them_inside(kit: Kit) -> None:
+    """Claude inside can update a plugin, and the Mac's folder stays read-only."""
+    plugins = kit.home / ".claude/plugins"
+    plugins.mkdir(parents=True)
+    repo = kit.clone(kit.src / "app")
+    run = kit.run(repo)
+    assert run.container.has_mount(plugins, "/mnt/host-plugins", ro=True)
+    assert not any(m.target == str(plugins) for m in run.container.mounts)
+    inside = kit.start_container(run.container)
+    assert inside.returncode == 0
+    assert inside.copies == [["-a", "--delete", "/mnt/host-plugins/", f"{plugins}/"]]
+
+
+def test_the_copy_replaces_an_old_volumes_unwritable_mount_point(kit: Kit) -> None:
+    """A volume from before the move holds the old mount point, which Docker made as root."""
+    plugins = kit.home / ".claude/plugins"
+    plugins.mkdir(parents=True)
+    repo = kit.clone(kit.src / "app")
+    run = kit.run(repo)
+    plugins.chmod(0o555)
+    inside = kit.start_container(run.container)
+    assert inside.returncode == 0
+    assert not plugins.exists()
+    assert len(inside.copies) == 1
+
+
+def test_a_file_that_vanishes_during_the_copy_does_not_stop_the_start(kit: Kit) -> None:
+    """The Mac's Claude may update a plugin while the copy runs. rsync exits 24 then."""
+    (kit.home / ".claude/plugins").mkdir(parents=True)
+    run = kit.run(kit.clone(kit.src / "app"))
+    assert kit.start_container(run.container, rsync_exit=24).returncode == 0
+
+
+def test_a_copy_that_fails_stops_the_start(kit: Kit) -> None:
+    (kit.home / ".claude/plugins").mkdir(parents=True)
+    run = kit.run(kit.clone(kit.src / "app"))
+    inside = kit.start_container(run.container, rsync_exit=23)
+    assert inside.returncode != 0
+    assert inside.program == []
+
+
+def test_a_mac_with_no_plugins_folder_copies_nothing(kit: Kit) -> None:
+    repo = kit.clone(kit.src / "app")
+    run = kit.run(repo)
+    assert not any(m.target == "/mnt/host-plugins" for m in run.container.mounts)
+    assert kit.start_container(run.container).copies == []
+
+
 # docker/cc.local: your own settings.
 
 
