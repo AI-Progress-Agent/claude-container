@@ -54,6 +54,7 @@ inside 'cd /tmp && mise use -g python@3.13 >/dev/null && python3 --version' |
   grep -q '^Python 3\.13\.' || fail "the user cannot move Python to 3.13"
 inside '! touch /usr/local/share/mise/installs/x 2>/dev/null' ||
   fail "the user can write the base image's tools"
+inside 'rsync --version' >/dev/null || fail "rsync does not run"
 inside 'gh stack --help' >/dev/null || fail "gh stack does not run"
 inside 'agent-browser --version' >/dev/null || fail "agent-browser does not run"
 inside '[ -x /opt/kit/cc ] && [ -f /opt/kit/compose.yaml ] && [ -f /opt/kit/cc-local.bash ]' ||

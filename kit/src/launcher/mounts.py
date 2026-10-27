@@ -1,4 +1,4 @@
-"""The host's Claude and git config, and the folders above each read-only mount."""
+"""The host's Claude and git config, its plugins, and the folders above each read-only mount."""
 
 from __future__ import annotations
 
@@ -23,8 +23,6 @@ HOST_CONFIG = (
     ".claude/agents",
     ".claude/commands",
     ".claude/hooks",
-    # installed_plugins.json names each plugin by its absolute host path.
-    ".claude/plugins",
     # Where the skills CLI installs shared skills.
     ".agents",
     # Scripts the status line and hooks call by name. The image puts ~/bin
@@ -67,6 +65,45 @@ def collect_host_mounts(draft: Draft, home: str) -> str:
         else:
             draft.mount(source, read_only=True)
     return links
+
+
+# Where the Mac's plugins folder mounts inside. collect_plugins says why it is
+# not at its own path.
+HOST_PLUGINS = "/mnt/host-plugins"
+
+
+def collect_plugins(draft: Draft, home: str) -> str:
+    """Mounts the Mac's plugins folder read-only, and returns the shell text that copies it inside.
+
+    The Mac's Claude runs plugin code, hooks and MCP servers among it, outside
+    any container. So the container must not write the Mac's folder. But
+    Claude inside writes its plugins folder to update a marketplace or a
+    plugin, and a plugin writes its own state there. So the folder mounts at
+    HOST_PLUGINS, and each start copies it to its own path, in the
+    claude-config volume. installed_plugins.json names each plugin by its
+    absolute path, and the copy keeps those paths.
+
+    The Mac's copy wins at each start: rsync --delete drops what Claude inside
+    changed. An update made inside lasts until the next start in this repo,
+    a second session's start among them, since they share the volume.
+
+    rsync exits 24 when a file vanishes during the copy, as when the Mac's
+    Claude updates a plugin at that moment. The rest of the copy is whole, so
+    the start goes on. Any other failure stops it.
+
+    A volume made before this mount moved holds the old mount point there, a
+    folder that Docker made as root. The user cannot write it, but can remove
+    it, since it is empty and the user owns its parent.
+    """
+    source = f"{home}/.claude/plugins"
+    if not os.path.isdir(source):
+        return ""
+    draft.mount(source, HOST_PLUGINS, read_only=True)
+    inside = shlex.quote(source)
+    return (
+        f"{{ [ ! -e {inside} ] || [ -w {inside} ] || rmdir {inside}; }} && "
+        f"{{ rsync -a --delete {HOST_PLUGINS}/ {inside}/ || [ $? -eq 24 ]; }} && "
+    )
 
 
 def collect_folder_mounts(draft: Draft, compose_binds: Callable[[str], list[str]]) -> None:

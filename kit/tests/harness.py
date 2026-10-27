@@ -213,6 +213,11 @@ FAKE_LN = """#!/bin/bash
 printf '%s\\0' "$@" >>"$SANDBOX/ln.log"
 printf '\\n' >>"$SANDBOX/ln.log"
 """
+FAKE_RSYNC = """#!/bin/bash
+printf '%s\\0' "$@" >>"$SANDBOX/rsync.log"
+printf '\\n' >>"$SANDBOX/rsync.log"
+exit "$(cat "$SANDBOX/rsync-exit")"
+"""
 FAKE_GETENT = """#!/bin/bash
 [ -f "$SANDBOX/mac-ip" ] || exit 2
 printf '%s       STREAM host.docker.internal\\n' "$(cat "$SANDBOX/mac-ip")"
@@ -364,6 +369,8 @@ class Inside:
     stderr: str
     # Each `ln` call's arguments.
     links: list[list[str]]
+    # Each `rsync` call's arguments.
+    copies: list[list[str]]
     # $0 and the arguments of the program the setup ran last.
     program: list[str]
     # AGENT_BROWSER_CDP as the program saw it, or None when unset.
@@ -567,23 +574,28 @@ class Kit:
         return Run(returncode, stdout, stderr, calls)
 
     def start_container(
-        self, container: Container, *, mac_ip: str | None = "192.168.65.254"
+        self,
+        container: Container,
+        *,
+        mac_ip: str | None = "192.168.65.254",
+        rsync_exit: int = 0,
     ) -> Inside:
-        """Runs the container's command on this machine, with fake ln and getent.
+        """Runs the container's command on this machine, with fake ln, rsync and getent.
 
-        ln logs its arguments, and getent resolves host.docker.internal to
-        mac_ip, or to nothing when mac_ip is None. The program logs its
-        arguments and AGENT_BROWSER_CDP.
+        ln and rsync log their arguments, and rsync exits with rsync_exit.
+        getent resolves host.docker.internal to mac_ip, or to nothing when
+        mac_ip is None. The program logs its arguments and AGENT_BROWSER_CDP.
         """
         sandbox = self.work / "inside"
         shutil.rmtree(sandbox, ignore_errors=True)
         (sandbox / "bin").mkdir(parents=True)
-        for name, text in (("ln", FAKE_LN), ("getent", FAKE_GETENT)):
+        for name, text in (("ln", FAKE_LN), ("rsync", FAKE_RSYNC), ("getent", FAKE_GETENT)):
             self._write_script(sandbox / "bin" / name, text)
         program = container.program[0]
         self._write_script(sandbox / "bin" / program, FAKE_PROGRAM)
         if mac_ip is not None:
             (sandbox / "mac-ip").write_text(mac_ip)
+        (sandbox / "rsync-exit").write_text(str(rsync_exit))
         env = {
             **self.env,
             "PATH": f"{sandbox / 'bin'}:{SYSTEM_PATH}",
@@ -599,17 +611,15 @@ class Kit:
             timeout=30,
             check=False,
         )
-        ln_log = sandbox / "ln.log"
-        links = [
-            line.removesuffix("\0").split("\0")
-            for line in (ln_log.read_text().splitlines() if ln_log.exists() else [])
-        ]
+        links = _calls(sandbox / "ln.log")
+        copies = _calls(sandbox / "rsync.log")
         args = sandbox / "program.args"
         cdp = sandbox / "cdp"
         return Inside(
             returncode=result.returncode,
             stderr=result.stderr,
             links=links,
+            copies=copies,
             program=args.read_text().splitlines() if args.exists() else [],
             cdp=cdp.read_text() if cdp.exists() else None,
         )
@@ -733,6 +743,13 @@ def _run_and_reap(
         reader.join(timeout=60)
         assert not reader.is_alive(), "the watcher did not end"
     return returncode, out["stdout"], out["stderr"]
+
+
+def _calls(log: Path) -> list[list[str]]:
+    """Each call's arguments, from a log that a fake command wrote, or [] when it never ran."""
+    if not log.exists():
+        return []
+    return [line.removesuffix("\0").split("\0") for line in log.read_text().splitlines()]
 
 
 def _compose_subcommand(argv: list[str]) -> str | None:

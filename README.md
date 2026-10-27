@@ -276,6 +276,16 @@ handling, that save still reaches the container. A plain file mounted on its
 own does not get the save: the container keeps reading the copy that existed
 at start.
 
+Plugins are the exception. Claude writes `~/.claude/plugins` to update a
+marketplace or a plugin, and a plugin writes its own state there. The Mac's
+Claude runs that folder's code outside any container, so the container must
+not write it. So the launcher mounts the Mac's folder read-only at
+`/mnt/host-plugins`, and each start copies it to `~/.claude/plugins` inside,
+in the container's own volume. Updates made inside go to that copy and never
+reach the Mac. The next start replaces the copy with the Mac's folder, so an
+update made inside lasts only until then. Every `docker/cc` in one repo shares
+that volume, so a second session's start replaces the copy under the first.
+
 Links elsewhere, such as a skill that links into your dotfiles repo, resolve
 only if you mount their targets yourself. See
 [`docker/compose.local.yaml`](#dockercomposelocalyaml).
@@ -310,8 +320,9 @@ The launcher leaves a marketplace out in these cases:
 - `skip_marketplaces` in [`docker/cc.local`](#dockercclocal) names it.
 - Its folder is missing on the Mac.
 - The container already sees its folder: the folder is in the repo, in a
-  mount the launcher already adds, such as a sibling repo or
-  `~/.claude/plugins`, or in a bind mount in any compose file. Those files
+  mount the launcher already adds, such as a sibling repo, in
+  `~/.claude/plugins`, which each start copies inside, or in a bind mount in
+  any compose file. Those files
   are the kit's `compose.yaml`, `docker/compose.repo.yaml` and
   `docker/compose.local.yaml`.
 
@@ -366,8 +377,9 @@ Some things stay on the Mac:
 - a signed-in browser: `agent-browser` inside drives a Chrome on the Mac (see
   [The browser](#the-browser))
 
-Plugins mount read-only, so a plugin update fails inside, and so does a
-plugin that saves its own state.
+A plugin update made inside, and a plugin's saved state, last only until the
+next start. Each start copies the Mac's plugins over them, as
+[How the container mirrors the Mac](#how-the-container-mirrors-the-mac) says.
 
 The container runs with no Linux capabilities and with `no-new-privileges`,
 so nothing inside can become root. Memory and process limits keep a runaway
@@ -983,7 +995,7 @@ session does not have it. Anywhere else, call the tool by the full path that
 | A setting you just changed on the Mac is not seen                    | A plain file mounts as it was at start                      | Restart `docker/cc`                                                                   |
 | `git push` or `gh` fails to authenticate                             | `gh` has no login on the Mac                                | Run `gh auth login` on the Mac, then restart `docker/cc`                              |
 | `could not write config file …/.git/config: Device or resource busy` | `.git/config` is read-only inside                           | Work without the upstream, as [GitHub operations](#github-operations) says            |
-| A plugin update fails                                                | Plugins mount read-only                                     | Update the plugin on the Mac                                                          |
+| A plugin update made inside is gone after a restart                  | Each start copies the Mac's plugins over the container's    | Update the plugin on the Mac too                                                      |
 | A plugin from a folder marketplace is missing                        | It did not mount, and a start line at `docker/cc` says why  | See [Folder marketplaces](#folder-marketplaces), then restart `docker/cc`             |
 | A program repo is not at `../<name>`                                 | It is not cloned next to this one, or its `origin` differs  | Clone it next to this repo from the same GitHub org, then restart `docker/cc`         |
 | A program repo at `../<name>` is missing recent commits              | It cannot fetch inside                                      | Use `gh`, or run `git fetch` in it on the Mac                                         |

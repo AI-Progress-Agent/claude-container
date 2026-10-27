@@ -17,7 +17,7 @@ from launcher.gitdirs import collect_worktree_mounts, guarded_worktrees
 from launcher.hooks import collect_hooks_paths
 from launcher.local import LocalOverrides
 from launcher.marketplaces import collect_marketplaces
-from launcher.mounts import collect_folder_mounts, collect_host_mounts
+from launcher.mounts import collect_folder_mounts, collect_host_mounts, collect_plugins
 from launcher.pointers import PointerScope, refuse_git_pointers
 from launcher.settings import Settings
 
@@ -80,6 +80,7 @@ def plan_run(host: Host) -> RunPlan:
     links = ""
     try:
         links = collect_host_mounts(draft, host.home)
+        links += collect_plugins(draft, host.home)
         collect_worktree_mounts(draft, host.repo)
         collect_sibling_repos(draft, list(host.settings.writable_siblings))
         collect_nested_clones(draft, list(host.local.nested_clones))

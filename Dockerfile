@@ -23,7 +23,7 @@ FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595
 RUN apt-get update && apt-get upgrade -y \
  && apt-get install -y --no-install-recommends \
       bash-completion ca-certificates curl git gnupg jq less openssh-client \
-      perl procps ripgrep unzip xz-utils \
+      perl procps ripgrep rsync unzip xz-utils \
  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
       -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
  && chmod 0644 /usr/share/keyrings/githubcli-archive-keyring.gpg \
