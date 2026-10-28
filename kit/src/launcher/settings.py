@@ -106,7 +106,7 @@ def load_settings(repo: str, docker_dir: str, main_clone: str) -> tuple[Settings
     return (
         Settings(
             project_name=cast(str, values.get("project_name", defaults.project_name)),
-            sibling_repos=values.get("sibling_repos", True) is not False,
+            sibling_repos=cast(bool, values.get("sibling_repos", defaults.sibling_repos)),
             writable_siblings=_strings(values.get("writable_siblings")),
             start_commands=_strings(values.get("start_commands")),
             nested_clones=_strings(values.get("nested_clones")),
