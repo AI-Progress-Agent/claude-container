@@ -4,6 +4,10 @@
                       volumes, the login among them. The main clone's folder
                       name plus -claude, by default. Two repos with one name
                       would share a login and an image.
+  sibling_repos       whether the program's other repos next to this one
+                      mount. true, by default. false mounts none, and then
+                      writable_siblings must be empty. See
+                      clones.collect_sibling_repos.
   writable_siblings   the sibling repos that mount writable. None, by
                       default. See clones.collect_sibling_repos.
   start_commands      shell commands run inside at each start, joined with
@@ -38,6 +42,7 @@ from typing import TypeIs, cast
 
 KEYS = (
     "project_name",
+    "sibling_repos",
     "writable_siblings",
     "start_commands",
     "nested_clones",
@@ -52,6 +57,7 @@ _CDP = re.compile(r'"cdp"\s*:\s*"?([0-9]+)')
 @dataclass(frozen=True)
 class Settings:
     project_name: str
+    sibling_repos: bool = True
     writable_siblings: tuple[str, ...] = ()
     start_commands: tuple[str, ...] = ()
     nested_clones: tuple[str, ...] = ()
@@ -82,6 +88,11 @@ def load_settings(repo: str, docker_dir: str, main_clone: str) -> tuple[Settings
         raise _kit_sh_refusal(repo, docker_dir, defaults.project_name, browser_port)
     else:
         values = {}
+    if values.get("sibling_repos") is False and values.get("writable_siblings"):
+        raise SettingsError(
+            f"docker/cc: {toml}: writable_siblings names sibling repos, "
+            "but sibling_repos = false mounts none"
+        )
     warnings: list[str] = []
     if "agent_browser_port" in values:
         port = values["agent_browser_port"]
@@ -95,6 +106,7 @@ def load_settings(repo: str, docker_dir: str, main_clone: str) -> tuple[Settings
     return (
         Settings(
             project_name=cast(str, values.get("project_name", defaults.project_name)),
+            sibling_repos=values.get("sibling_repos", True) is not False,
             writable_siblings=_strings(values.get("writable_siblings")),
             start_commands=_strings(values.get("start_commands")),
             nested_clones=_strings(values.get("nested_clones")),
@@ -127,6 +139,9 @@ def _setting_problem(key: str, value: object) -> str | None:
                     "project_name must be a string of lower-case letters, digits, dashes and "
                     "underscores that starts with a letter or digit"
                 )
+        case "sibling_repos":
+            if not isinstance(value, bool):
+                return "sibling_repos must be true or false"
         case "writable_siblings" | "start_commands" | "nested_clones":
             if not isinstance(value, list) or not all(
                 isinstance(v, str) for v in cast(list[object], value)

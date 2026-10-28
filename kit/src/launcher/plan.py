@@ -82,7 +82,8 @@ def plan_run(host: Host) -> RunPlan:
         links = collect_host_mounts(draft, host.home)
         links += collect_plugins(draft, host.home)
         collect_worktree_mounts(draft, host.repo)
-        collect_sibling_repos(draft, list(host.settings.writable_siblings))
+        if host.settings.sibling_repos:
+            collect_sibling_repos(draft, list(host.settings.writable_siblings))
         collect_nested_clones(draft, list(host.local.nested_clones))
         draft.worktrees = guarded_worktrees(draft.guarded_git_dirs)
         collect_hooks_paths(draft)
