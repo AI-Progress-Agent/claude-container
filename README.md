@@ -91,6 +91,7 @@ Three limits apply to `docker/cc.local`:
    | Setting              | Default                                                                                                                                 | Sets                                                                                                                                                                 |
    | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
    | `project_name`       | the main clone's folder name plus `-claude`, in lower case, with each character other than `a-z`, `0-9`, `_` and `-` turned into a dash | the image name and the volumes, the login among them, as a string such as `"app-claude"`. It takes only `a-z`, `0-9`, `_` and `-`, and starts with a letter or digit |
+   | `sibling_repos`      | `true`                                                                                                                                  | whether the program's other repos next to this one mount read-only. With `false`, none mounts, and `writable_siblings` must stay empty                               |
    | `writable_siblings`  | none                                                                                                                                    | the sibling repos that mount writable, as a list of folder names, such as `["plugins-repo"]`                                                                         |
    | `start_commands`     | none                                                                                                                                    | shell commands run inside at each start, before Claude, as a list such as `["pnpm install"]`. They run joined with `&&`                                              |
    | `agent_browser_port` | the `cdp` port in the repo's `agent-browser.json`                                                                                       | the Mac Chrome port that `agent-browser` drives, as a number. With `false`, it drives no Chrome                                                                      |
@@ -339,6 +340,9 @@ So another client's repo or a partner folder in the same parent directory
 stays out. A worktree finds the same repos as its main clone, wherever the
 worktree sits. At start, the launcher names each repo it mounted. A clone
 cannot fetch inside, so it is as current as the Mac's last fetch.
+
+A repo whose sessions need none of the others sets `sibling_repos = false` in
+`docker/kit.toml`. Then the launcher mounts no sibling repo.
 
 A sibling named in `writable_siblings` mounts writable instead. Its
 `.git/hooks` and `.git/config` still mount read-only, as the repo's do, and

@@ -2,7 +2,8 @@
 
 Each clone next to the main clone whose origin has the same host and owner
 mounts read-only. One that writable_siblings names mounts writable, with its
-hooks, config and the files that lead git to them read-only.
+hooks, config and the files that lead git to them read-only. With
+sibling_repos = false, none mounts.
 """
 
 from __future__ import annotations
@@ -91,6 +92,14 @@ def test_without_settings_each_sibling_mounts_read_only(kit: Kit, this: Path) ->
         ("url-sibling", True),
     ]
     assert "mounted writable" not in run.stderr
+
+
+def test_sibling_repos_false_mounts_no_sibling(kit: Kit, this: Path) -> None:
+    kit.settings(this, sibling_repos=False)
+    run = kit.run(this)
+    assert run.returncode == 0, run.stderr
+    assert sibling_mounts(kit, run.container, this) == []
+    assert "mounted read-only" not in run.stderr
 
 
 def test_writable_sibling_without_hooks_gets_them_made(kit: Kit, this: Path) -> None:

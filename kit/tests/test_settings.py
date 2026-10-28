@@ -25,6 +25,11 @@ def test_without_uv_the_launcher_names_how_to_install_it(kit: Kit) -> None:
         ('start_commands = "make"\n', "start_commands must be a list of strings"),
         ("nested_clones = [1]\n", "nested_clones must be a list of strings"),
         ('writable_siblings = "plugins"\n', "writable_siblings must be a list of strings"),
+        ('sibling_repos = "no"\n', "sibling_repos must be true or false"),
+        (
+            'sibling_repos = false\nwritable_siblings = ["plugins"]\n',
+            "writable_siblings names sibling repos, but sibling_repos = false mounts none",
+        ),
         ("agent_browser_port = true\n", "agent_browser_port must be a port number, or false"),
         ('agent_browser_port = "9222"\n', "agent_browser_port must be a port number, or false"),
         ("agent_browser_port = 70000\n", "agent_browser_port must be a port number, or false"),

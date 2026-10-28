@@ -467,6 +467,7 @@ class Kit:
         repo: Path,
         *,
         project_name: str | None = None,
+        sibling_repos: bool | None = None,
         writable_siblings: Iterable[str] | None = None,
         start_commands: Iterable[str] | None = None,
         nested_clones: Iterable[str] | None = None,
@@ -481,6 +482,8 @@ class Kit:
         lines: list[str] = []
         if project_name is not None:
             lines.append(f"project_name = {json.dumps(project_name)}")
+        if sibling_repos is not None:
+            lines.append(f"sibling_repos = {json.dumps(sibling_repos)}")
         for name, values in (
             ("writable_siblings", writable_siblings),
             ("start_commands", start_commands),
