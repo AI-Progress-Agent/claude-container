@@ -342,7 +342,10 @@ worktree sits. At start, the launcher names each repo it mounted. A clone
 cannot fetch inside, so it is as current as the Mac's last fetch.
 
 A repo whose sessions need none of the others sets `sibling_repos = false` in
-`docker/kit.toml`. Then the launcher mounts no sibling repo.
+`docker/kit.toml`. Then the launcher mounts no sibling repo, and
+`writable_siblings` must stay empty. A folder marketplace inside a sibling
+still mounts read-only, on its own, as [Folder marketplaces](#folder-marketplaces)
+describes.
 
 A sibling named in `writable_siblings` mounts writable instead. Its
 `.git/hooks` and `.git/config` still mount read-only, as the repo's do, and
