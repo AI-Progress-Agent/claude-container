@@ -193,6 +193,10 @@ Autoupdate is off inside. `claude update` still downloads a new Claude, about
 container does, so the next run is back on the image's version. Upgrade with
 `docker/cc build` instead.
 
+Plugins still auto-update inside, since the image sets
+`FORCE_AUTOUPDATE_PLUGINS=1`. Those updates last only until the next start, as
+[How the container mirrors the Mac](#how-the-container-mirrors-the-mac) says.
+
 `claude doctor` gives warnings about `~/.local/bin`. They are expected,
 because the image puts Claude at `/usr/local/bin/claude`.
 

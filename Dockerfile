@@ -82,7 +82,9 @@ RUN dir=/usr/local/share/gh-stack \
 # CLAUDE_VERSION becomes the newest release at least seven days old, the same
 # window mise uses. CI passes the version it picked, so a new release moves
 # the cached layer. Autoupdate is off: a running container never changes
-# itself, and a new release comes as a new image.
+# itself, and a new release comes as a new image. DISABLE_AUTOUPDATER also
+# stops plugin updates, so FORCE_AUTOUPDATE_PLUGINS turns those back on. They
+# go to the container's copy of the plugins, which each start replaces.
 ARG CLAUDE_VERSION=
 RUN set -eu; \
     base=https://downloads.claude.ai/claude-code-releases; \
@@ -91,7 +93,8 @@ RUN set -eu; \
     curl -fsSL -o /usr/local/bin/claude "$base/$v/linux-arm64/claude"; \
     echo "$sum  /usr/local/bin/claude" | sha256sum -c -; \
     chmod 0755 /usr/local/bin/claude
-ENV DISABLE_AUTOUPDATER=1
+ENV DISABLE_AUTOUPDATER=1 \
+    FORCE_AUTOUPDATE_PLUGINS=1
 
 # mise supplies every language and tool. MISE_VERSION follows the same rule
 # as CLAUDE_VERSION.
