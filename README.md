@@ -2,6 +2,7 @@
 
 [![ci](https://github.com/AI-Progress-Agent/claude-container/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/AI-Progress-Agent/claude-container/actions/workflows/ci.yml?query=branch%3Amain)
 [![release](https://img.shields.io/github/v/release/AI-Progress-Agent/claude-container)](https://github.com/AI-Progress-Agent/claude-container/releases/latest)
+[![weekly rebuild](https://img.shields.io/github/actions/workflow/status/AI-Progress-Agent/claude-container/release.yml?branch=main&label=weekly%20rebuild)](https://github.com/AI-Progress-Agent/claude-container/actions/workflows/release.yml?query=branch%3Amain)
 
 `claude-container` runs Claude Code for a repo in a Linux container that
 mirrors your Mac's Claude setup. Your global `CLAUDE.md`, settings, hooks,
