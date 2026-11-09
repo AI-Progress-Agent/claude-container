@@ -15,7 +15,8 @@
 FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
 
 # git, gh and ripgrep are what Claude reaches for. jq and perl run the host's
-# hooks. xz-utils unpacks the Node that mise downloads.
+# hooks. xz-utils unpacks the Node that mise downloads, and libatomic1 is a
+# library that Node 26 loads at start.
 #
 # The upgrade brings in Debian's security fixes for the packages already in
 # the base image, such as libc and OpenSSL. The digest above moves only with
@@ -23,7 +24,7 @@ FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595
 RUN apt-get update && apt-get upgrade -y \
  && apt-get install -y --no-install-recommends \
       bash-completion ca-certificates curl git gnupg jq less openssh-client \
-      perl procps ripgrep rsync unzip xz-utils \
+      libatomic1 perl procps ripgrep rsync unzip xz-utils \
  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
       -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
  && chmod 0644 /usr/share/keyrings/githubcli-archive-keyring.gpg \
