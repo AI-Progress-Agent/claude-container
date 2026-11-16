@@ -14,7 +14,8 @@
 # Dependabot moves the digest when Debian publishes a new image.
 FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
 
-# git, gh and ripgrep are what Claude reaches for. jq and perl run the host's
+# git, gh and ripgrep are what Claude reaches for. poppler-utils gives it
+# pdftotext and pdftoppm, so it can read a PDF as text or page images. jq and perl run the host's
 # hooks. xz-utils unpacks the Node that mise downloads, and libatomic1 is a
 # library that Node 26 loads at start.
 #
@@ -24,7 +25,7 @@ FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595
 RUN apt-get update && apt-get upgrade -y \
  && apt-get install -y --no-install-recommends \
       bash-completion ca-certificates curl git gnupg jq less openssh-client \
-      libatomic1 perl procps ripgrep rsync unzip xz-utils \
+      libatomic1 perl poppler-utils procps ripgrep rsync unzip xz-utils \
  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
       -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
  && chmod 0644 /usr/share/keyrings/githubcli-archive-keyring.gpg \
@@ -118,6 +119,8 @@ ENV DISABLE_AUTOUPDATER=1 \
 #     and node-gyp downloads them itself when a repo adds one.
 #   - debug symbols, which strip removes with binutils installed only for
 #     the purpose. Claude is a download of its own, and stays as it is.
+#     Python packages keep theirs: their wheels patch the bundled libraries
+#     in a way strip corrupts, and numpy then fails to load.
 ARG MISE_VERSION=
 COPY image/mise.toml /etc/mise/config.toml
 RUN set -eu; \
@@ -130,7 +133,7 @@ RUN set -eu; \
     rm -rf "$(mise where node)/include" /root/.cache; \
     apt-get update; \
     apt-get install -y --no-install-recommends binutils; \
-    find /usr/local/bin/mise /usr/local/share/mise/installs -type f -size +100k -exec sh -ec ' \
+    find /usr/local/bin/mise /usr/local/share/mise/installs -path '*/site-packages' -prune -o -type f -size +100k -exec sh -ec ' \
       for f; do \
         if readelf -S "$f" 2>/dev/null | grep -q "\.symtab"; then strip --strip-unneeded "$f"; fi; \
       done' sh {} +; \
