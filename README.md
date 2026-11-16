@@ -5,9 +5,9 @@
 [![weekly rebuild](https://img.shields.io/github/actions/workflow/status/AI-Progress-Agent/claude-container/release.yml?branch=main&label=weekly%20rebuild)](https://github.com/AI-Progress-Agent/claude-container/actions/workflows/release.yml?query=branch%3Amain)
 
 `claude-container` runs Claude Code for a repo in a Linux container that
-mirrors your Mac's Claude setup. Your global `CLAUDE.md`, settings, hooks,
-output styles, skills, agents, plugins, status line and git identity all work
-inside, unchanged. Claude can write to the repo and to the project's memory,
+mirrors your Mac's Claude setup. Your global `CLAUDE.md`, settings, rules,
+hooks, output styles, skills, agents, plugins, status line and git identity
+all work inside, unchanged. Claude can write to the repo and to the project's memory,
 and to little else.
 
 It is built for Apple Silicon Macs running Docker Desktop. The image is arm64
