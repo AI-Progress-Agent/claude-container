@@ -1,8 +1,8 @@
 """The claude-container launcher.
 
 It runs Claude Code for a repo in a container that mirrors the host's Claude
-setup: global CLAUDE.md, settings, hooks, output styles, skills, plugins, the
-status line, git identity, and the project's memory. The program's other repos
+setup: global CLAUDE.md, settings, rules, hooks, output styles, skills,
+plugins, the status line, git identity, and the project's memory. The program's other repos
 cloned next to the repo mount read-only.
 
 A repo does not call it directly. Its docker/cc stub copies this kit out of

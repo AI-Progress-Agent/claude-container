@@ -19,6 +19,7 @@ HOST_CONFIG = (
     ".claude/settings.json",
     ".claude/settings.local.json",
     ".claude/output-styles",
+    ".claude/rules",
     ".claude/skills",
     ".claude/agents",
     ".claude/commands",
