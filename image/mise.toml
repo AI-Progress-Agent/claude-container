@@ -8,6 +8,7 @@
 #   - ccstatusline: the host's status line
 #   - pyright, typescript-language-server: the LSP plugins
 #   - ast-grep: the ast-grep plugin and the global CLAUDE.md
+#   - markitdown: the global documents rule, which converts Office files to Markdown
 #   - agent-browser: drives the Mac's Chrome. docker/cc says how it connects. Pinned.
 #
 # Node is here because the npm tools need one to install and run. Python is
@@ -29,3 +30,4 @@ uv = "latest"
 "npm:pyright" = "latest"
 "npm:typescript-language-server" = "latest"
 "npm:agent-browser" = "0.38.1"
+"pipx:markitdown" = { version = "latest", extras = "docx,pptx,xlsx,xls,pdf,outlook" }
