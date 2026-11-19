@@ -5,7 +5,8 @@ docker, gh and chflags commands go first on the PATH:
 
 - docker logs each call, with the environment it got and the files flagged at
   that moment. `docker cp` copies the kit as the image holds it. `docker
-  compose config` prints the bind mounts that compose.yaml makes. `docker
+  compose config` prints the bind mounts that compose.yaml makes, and those
+  of compose.guard.yaml when the launcher passes it. `docker
   compose run` runs the test's run hook, which stands in for the container.
   `docker image inspect --format` prints the image ID in the file image-id.
   `docker pull` replaces that file with pulled-id, when there is one, and
@@ -120,8 +121,10 @@ def compose_config():
         return 1
     env = os.environ
     git = env["REPO_GIT"]
-    binds = [env["REPO"], git, git + "/hooks", git + "/config",
-             env["HOST_HOME"] + "/.claude/projects/" + env["PROJECT_KEY"]]
+    binds = [env["REPO"], git, env["HOST_HOME"] + "/.claude/projects/" + env["PROJECT_KEY"]]
+    # compose.guard.yaml adds the read-only hooks and config.
+    if any(arg.endswith("/compose.guard.yaml") for arg in argv):
+        binds += [git + "/hooks", git + "/config"]
     binds += lines(fake / "compose-binds") or []
     volumes = [{"type": "bind", "source": t, "target": t} for t in binds]
     volumes.append({"type": "volume", "source": "claude-config",
@@ -479,6 +482,7 @@ class Kit:
         start_commands: Iterable[str] | None = None,
         nested_clones: Iterable[str] | None = None,
         agent_browser_port: int | bool | None = None,
+        host_git_guard: bool | None = None,
     ) -> None:
         """Writes the repo's settings. A setting left as None stays unset.
 
@@ -501,6 +505,8 @@ class Kit:
         if agent_browser_port is not None:
             port = "false" if agent_browser_port is False else str(int(agent_browser_port))
             lines.append(f"agent_browser_port = {port}")
+        if host_git_guard is not None:
+            lines.append(f"host_git_guard = {json.dumps(host_git_guard)}")
         self.install(repo)
         (repo / "docker" / "kit.toml").write_text("".join(f"{line}\n" for line in lines))
 

@@ -43,16 +43,16 @@ follows the newest release. A repo can pin a release instead (see
 
 Settings stack in three levels, and a later level wins:
 
-1. The kit's defaults, in `kit/src/launcher/settings.py` and
-   `kit/compose.yaml`.
+1. The kit's defaults, in `kit/src/launcher/settings.py`, `kit/compose.yaml`
+   and `kit/compose.guard.yaml`.
 2. The repo's committed files: `docker/kit.toml` and `docker/compose.repo.yaml`.
 3. Your uncommitted files: `docker/cc.local` and `docker/compose.local.yaml`.
    See [Your machine's own setup](#your-machines-own-setup).
 
 Three limits apply to `docker/cc.local`:
 
-- The launcher takes `project_name` and `writable_siblings` from
-  `docker/kit.toml` alone. So `docker/cc.local` cannot change them.
+- The launcher takes `project_name`, `writable_siblings` and `host_git_guard`
+  from `docker/kit.toml` alone. So `docker/cc.local` cannot change them.
 - `docker/cc build` and `docker/cc upgrade` do not read it.
 - The launcher sets `HOST_HOME`, `REPO`, `REPO_GIT`, `REPO_GIT_MODE`,
   `HOST_USER`, `PROJECT_KEY` and `PROJECT_NAME` for Compose before it reads
@@ -89,14 +89,15 @@ Three limits apply to `docker/cc.local`:
    rest of the repo stays out of the image.
 4. Add `docker/kit.toml` if a default does not fit. Each setting is optional:
 
-   | Setting              | Default                                                                                                                                 | Sets                                                                                                                                                                 |
-   | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-   | `project_name`       | the main clone's folder name plus `-claude`, in lower case, with each character other than `a-z`, `0-9`, `_` and `-` turned into a dash | the image name and the volumes, the login among them, as a string such as `"app-claude"`. It takes only `a-z`, `0-9`, `_` and `-`, and starts with a letter or digit |
-   | `sibling_repos`      | `true`                                                                                                                                  | whether the program's other repos next to this one mount read-only. With `false`, none mounts, and `writable_siblings` must stay empty                               |
-   | `writable_siblings`  | none                                                                                                                                    | the sibling repos that mount writable, as a list of folder names, such as `["plugins-repo"]`                                                                         |
-   | `start_commands`     | none                                                                                                                                    | shell commands run inside at each start, before Claude, as a list such as `["pnpm install"]`. They run joined with `&&`                                              |
-   | `agent_browser_port` | the `cdp` port in the repo's `agent-browser.json`                                                                                       | the Mac Chrome port that `agent-browser` drives, as a number. With `false`, it drives no Chrome                                                                      |
-   | `nested_clones`      | none                                                                                                                                    | the clones and bare repos inside the repo kept on purpose, as a list of paths in the repo, such as `["vendor/sdk"]`                                                  |
+   | Setting              | Default                                                                                                                                 | Sets                                                                                                                                                                                                   |
+   | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+   | `project_name`       | the main clone's folder name plus `-claude`, in lower case, with each character other than `a-z`, `0-9`, `_` and `-` turned into a dash | the image name and the volumes, the login among them, as a string such as `"app-claude"`. It takes only `a-z`, `0-9`, `_` and `-`, and starts with a letter or digit                                   |
+   | `sibling_repos`      | `true`                                                                                                                                  | whether the program's other repos next to this one mount read-only. With `false`, none mounts, and `writable_siblings` must stay empty                                                                 |
+   | `writable_siblings`  | none                                                                                                                                    | the sibling repos that mount writable, as a list of folder names, such as `["plugins-repo"]`                                                                                                           |
+   | `start_commands`     | none                                                                                                                                    | shell commands run inside at each start, before Claude, as a list such as `["pnpm install"]`. They run joined with `&&`                                                                                |
+   | `agent_browser_port` | the `cdp` port in the repo's `agent-browser.json`                                                                                       | the Mac Chrome port that `agent-browser` drives, as a number. With `false`, it drives no Chrome                                                                                                        |
+   | `nested_clones`      | none                                                                                                                                    | the clones and bare repos inside the repo kept on purpose, as a list of paths in the repo, such as `["vendor/sdk"]`                                                                                    |
+   | `host_git_guard`     | `true`                                                                                                                                  | whether the launcher guards git on the Mac from what the container writes. With `false`, a git config or hook written inside can run on the Mac. See [Turn the git guard off](#turn-the-git-guard-off) |
 
    Two repos with one `project_name` share a login and an image, so give each
    repo its own. A worktree takes its main clone's name, so it shares that
@@ -495,6 +496,10 @@ Everything GitHub does inside the container goes over HTTPS with your Mac's
 So the container can do on GitHub whatever your Mac's `gh` login can do. To
 narrow that, sign `gh` in on the Mac with a token of smaller scope.
 
+By default the launcher guards git on the Mac, as the rest of this section
+describes. [Turn the git guard off](#turn-the-git-guard-off) says what
+changes without the guard.
+
 The repo mounts writable, except `.git/hooks` and `.git/config`, which mount
 read-only. Git runs commands from both. So a write there from the container
 would run on your Mac at its next `git` command, and `git status` would not
@@ -844,6 +849,36 @@ merge REST endpoint both refuse it. The read-only `.git/config` does not stop
 `gh stack`. With one remote it pushes to that remote without
 `remote.pushDefault`.
 
+### Turn the git guard off
+
+Set `host_git_guard = false` in `docker/kit.toml` to work with git inside as
+on the Mac. The launcher then skips every guard above:
+
+- `.git/hooks` and `.git/config` mount writable. So does the clone's `.git`
+  when `docker/` sits below the clone's root.
+- No file gets the `uchg` flag, so git on the Mac can write its config during
+  the session.
+- At start, the launcher refuses no `.git`, `core.hooksPath` folder or config
+  value.
+- The watcher moves nothing aside. A clone, worktree or submodule made inside
+  keeps its `.git`.
+- `nested_clones` does nothing, and a writable sibling mounts with no
+  read-only git files.
+
+So setting an upstream, `git worktree move`, Husky's install and a new clone
+all work inside. The cost is what the guard exists to stop: a hook, or a
+config entry such as `core.fsmonitor`, that the container writes runs on the
+Mac at its next git command, and `git status` does not show it. At each start
+the launcher prints a line that says the guard is off.
+
+The launcher still mounts each worktree's `.git` file read-only when it sits
+outside the repo and every writable sibling. Without it, `git worktree prune`
+inside would take that worktree for deleted, and remove its records from the
+Mac's `.git`.
+
+`docker/cc.local` cannot change the setting. It lives in `docker/kit.toml`
+alone, so everyone who runs the repo sees the choice in a committed file.
+
 ## Your machine's own setup
 
 Three uncommitted files carry what only your machine needs. All three are
@@ -998,23 +1033,23 @@ session does not have it. Anywhere else, call the tool by the full path that
 
 ## When something is missing
 
-| What you see inside                                                                                  | Why                                                                          | Fix                                                                                                                                                                     |
-| ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `command not found`                                                                                  | The image does not have the tool                                             | Add it to `mise.local.toml`, then run `docker/cc build`                                                                                                                 |
-| A CLI works on the Mac but is not signed in inside                                                   | The Mac keeps the login in the keychain                                      | Export it in `docker/cc.local`, write it with `local_setup`, then restart `docker/cc`                                                                                   |
-| A link in your config points at a path that is missing                                               | Nothing mounts the link's target                                             | Mount the target directory in `docker/compose.local.yaml`, then restart `docker/cc`                                                                                     |
-| A path is there but empty, and owned by root                                                         | Its source in `docker/compose.local.yaml` is not on the Mac                  | Fix the source path in `docker/compose.local.yaml`, then restart `docker/cc`                                                                                            |
-| A setting you just changed on the Mac is not seen                                                    | A plain file mounts as it was at start                                       | Restart `docker/cc`                                                                                                                                                     |
-| `git push` or `gh` fails to authenticate                                                             | `gh` has no login on the Mac                                                 | Run `gh auth login` on the Mac, then restart `docker/cc`                                                                                                                |
-| `could not write config file …/.git/config: Device or resource busy`                                 | `.git/config` is read-only inside                                            | Work without the upstream, as [GitHub operations](#github-operations) says                                                                                              |
-| A clone made inside has `.git.cc-blocked` where its `.git` was, and git there runs on the outer repo | The launcher moves a `.git` made inside the repo or a writable sibling aside | Clone outside both, such as under `/tmp`. To keep it inside, add its path to `nested_clones`, as [GitHub operations](#github-operations) says, then restart `docker/cc` |
-| A plugin update made inside is gone after a restart                                                  | Each start copies the Mac's plugins over the container's                     | Update the plugin on the Mac too                                                                                                                                        |
-| A plugin from a folder marketplace is missing                                                        | It did not mount, and a start line at `docker/cc` says why                   | See [Folder marketplaces](#folder-marketplaces), then restart `docker/cc`                                                                                               |
-| A program repo is not at `../<name>`                                                                 | It is not cloned next to this one, or its `origin` differs                   | Clone it next to this repo from the same GitHub org, then restart `docker/cc`                                                                                           |
-| A program repo at `../<name>` is missing recent commits                                              | It cannot fetch inside                                                       | Use `gh`, or run `git fetch` in it on the Mac                                                                                                                           |
-| `agent-browser` cannot connect                                                                       | No Chrome is open on the Mac on the repo's port                              | Open Chrome on the Mac as [The browser](#the-browser) says                                                                                                              |
-| `docker/cc: host.docker.internal does not resolve` at start                                          | The Docker engine is not Docker Desktop                                      | Run the container under Docker Desktop                                                                                                                                  |
-| `claude doctor` warns about `~/.local/bin`                                                           | The image puts Claude at `/usr/local/bin/claude`                             | Nothing: the warning is expected                                                                                                                                        |
+| What you see inside                                                                                  | Why                                                                          | Fix                                                                                                                                                                                                                           |
+| ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `command not found`                                                                                  | The image does not have the tool                                             | Add it to `mise.local.toml`, then run `docker/cc build`                                                                                                                                                                       |
+| A CLI works on the Mac but is not signed in inside                                                   | The Mac keeps the login in the keychain                                      | Export it in `docker/cc.local`, write it with `local_setup`, then restart `docker/cc`                                                                                                                                         |
+| A link in your config points at a path that is missing                                               | Nothing mounts the link's target                                             | Mount the target directory in `docker/compose.local.yaml`, then restart `docker/cc`                                                                                                                                           |
+| A path is there but empty, and owned by root                                                         | Its source in `docker/compose.local.yaml` is not on the Mac                  | Fix the source path in `docker/compose.local.yaml`, then restart `docker/cc`                                                                                                                                                  |
+| A setting you just changed on the Mac is not seen                                                    | A plain file mounts as it was at start                                       | Restart `docker/cc`                                                                                                                                                                                                           |
+| `git push` or `gh` fails to authenticate                                                             | `gh` has no login on the Mac                                                 | Run `gh auth login` on the Mac, then restart `docker/cc`                                                                                                                                                                      |
+| `could not write config file …/.git/config: Device or resource busy`                                 | `.git/config` is read-only inside                                            | Work without the upstream, as [GitHub operations](#github-operations) says. Or [turn the git guard off](#turn-the-git-guard-off)                                                                                              |
+| A clone made inside has `.git.cc-blocked` where its `.git` was, and git there runs on the outer repo | The launcher moves a `.git` made inside the repo or a writable sibling aside | Clone outside both, such as under `/tmp`. To keep it inside, add its path to `nested_clones`, as [GitHub operations](#github-operations) says, then restart `docker/cc`. Or [turn the git guard off](#turn-the-git-guard-off) |
+| A plugin update made inside is gone after a restart                                                  | Each start copies the Mac's plugins over the container's                     | Update the plugin on the Mac too                                                                                                                                                                                              |
+| A plugin from a folder marketplace is missing                                                        | It did not mount, and a start line at `docker/cc` says why                   | See [Folder marketplaces](#folder-marketplaces), then restart `docker/cc`                                                                                                                                                     |
+| A program repo is not at `../<name>`                                                                 | It is not cloned next to this one, or its `origin` differs                   | Clone it next to this repo from the same GitHub org, then restart `docker/cc`                                                                                                                                                 |
+| A program repo at `../<name>` is missing recent commits                                              | It cannot fetch inside                                                       | Use `gh`, or run `git fetch` in it on the Mac                                                                                                                                                                                 |
+| `agent-browser` cannot connect                                                                       | No Chrome is open on the Mac on the repo's port                              | Open Chrome on the Mac as [The browser](#the-browser) says                                                                                                                                                                    |
+| `docker/cc: host.docker.internal does not resolve` at start                                          | The Docker engine is not Docker Desktop                                      | Run the container under Docker Desktop                                                                                                                                                                                        |
+| `claude doctor` warns about `~/.local/bin`                                                           | The image puts Claude at `/usr/local/bin/claude`                             | Nothing: the warning is expected                                                                                                                                                                                              |
 
 An agent inside the container can edit the three files in
 [Your machine's own setup](#your-machines-own-setup), because they sit in the
@@ -1044,6 +1079,7 @@ The repo has these parts:
 | `cc`                                     | the bash entry point the stub runs. It checks for uv, syncs the kit's `.venv`, then runs the launcher |
 | `cc-local.bash`                          | the helper that sources `docker/cc.local` and runs its `notify_host`                                  |
 | `compose.yaml`                           | the container's service, mounts and limits                                                            |
+| `compose.guard.yaml`                     | the read-only `.git/hooks` and `.git/config`, stacked on `compose.yaml` while the launcher guards git |
 | `pyproject.toml`, `uv.lock`              | the uv project. The launcher uses only the standard library, and the dev group holds the checks       |
 | `.python-version`                        | the Python that uv runs the launcher with                                                             |
 | `src/__main__.py`                        | what `kit/cc` runs, which calls `launcher.main`                                                       |

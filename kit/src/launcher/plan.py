@@ -13,7 +13,7 @@ from launcher.clones import collect_nested_clones, collect_sibling_repos
 from launcher.configs import collect_config_paths
 from launcher.draft import Draft, Mount, Refused
 from launcher.flags import guarded_files
-from launcher.gitdirs import collect_worktree_mounts, guarded_worktrees
+from launcher.gitdirs import collect_worktree_files, collect_worktree_mounts, guarded_worktrees
 from launcher.hooks import collect_hooks_paths
 from launcher.local import LocalOverrides
 from launcher.marketplaces import collect_marketplaces
@@ -59,6 +59,8 @@ class RunPlan:
     flag_files: tuple[str, ...]
     # What the watcher searches during the session.
     pointers: PointerScope
+    # Whether the launcher guards git on the Mac: see plan_run.
+    host_git_guard: bool
     # What to print before the container starts.
     messages: tuple[str, ...]
     # Why the container must not start, or None.
@@ -71,6 +73,15 @@ class RunPlan:
 
 
 def plan_run(host: Host) -> RunPlan:
+    """The plan for one run, read from the host.
+
+    By default the launcher guards git on the Mac from what the container
+    writes: read-only mounts of what git reads commands from, the flags on
+    those files, the refusals at start, and the watcher's moves. With
+    host_git_guard false, it plans none of them. It still mounts the files
+    that keep each worktree in view: see gitdirs.collect_worktree_files.
+    """
+    guard = host.settings.host_git_guard
     draft = Draft(host.repo, host.repo_git, host.repo_git_read_only)
     # A bind mount whose source is missing becomes an empty folder owned by
     # root. compose.yaml mounts this one, and it may not exist yet.
@@ -81,15 +92,26 @@ def plan_run(host: Host) -> RunPlan:
     try:
         links = collect_host_mounts(draft, host.home)
         links += collect_plugins(draft, host.home)
-        collect_worktree_mounts(draft, host.repo)
+        if guard:
+            collect_worktree_mounts(draft, host.repo)
         if host.settings.sibling_repos:
-            collect_sibling_repos(draft, list(host.settings.writable_siblings))
-        collect_nested_clones(draft, list(host.local.nested_clones))
-        draft.worktrees = guarded_worktrees(draft.guarded_git_dirs)
-        collect_hooks_paths(draft)
-        collect_config_paths(draft)
+            collect_sibling_repos(
+                draft, list(host.settings.writable_siblings), host_git_guard=guard
+            )
+        if guard:
+            collect_nested_clones(draft, list(host.local.nested_clones))
+            draft.worktrees = guarded_worktrees(draft.guarded_git_dirs)
+            collect_hooks_paths(draft)
+            collect_config_paths(draft)
+        else:
+            collect_worktree_files(draft)
+            draft.messages.append(
+                "docker/cc: host_git_guard = false, so a git config or hook written inside "
+                "can run on the Mac"
+            )
         collect_folder_mounts(draft, compose_binds)
-        refuse_git_pointers(draft)
+        if guard:
+            refuse_git_pointers(draft)
         collect_marketplaces(draft, host.home, list(host.local.skip_marketplaces), compose_binds)
     except Refused as refused:
         refusal = refused.message
@@ -103,8 +125,9 @@ def plan_run(host: Host) -> RunPlan:
         args=host.args,
         make_dirs=tuple(draft.disk.folders),
         make_files=tuple(draft.disk.files.items()),
-        flag_files=tuple(guarded_files(draft)),
+        flag_files=tuple(guarded_files(draft)) if guard else (),
         pointers=PointerScope.of(draft),
+        host_git_guard=guard,
         messages=tuple(draft.messages),
         refusal=refusal,
     )

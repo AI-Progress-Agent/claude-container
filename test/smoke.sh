@@ -57,7 +57,7 @@ inside '! touch /usr/local/share/mise/installs/x 2>/dev/null' ||
 inside 'rsync --version' >/dev/null || fail "rsync does not run"
 inside 'gh stack --help' >/dev/null || fail "gh stack does not run"
 inside 'agent-browser --version' >/dev/null || fail "agent-browser does not run"
-inside '[ -x /opt/kit/cc ] && [ -f /opt/kit/compose.yaml ] && [ -f /opt/kit/cc-local.bash ]' ||
+inside '[ -x /opt/kit/cc ] && [ -f /opt/kit/compose.yaml ] && [ -f /opt/kit/compose.guard.yaml ] && [ -f /opt/kit/cc-local.bash ]' ||
   fail "the kit is not in /opt/kit"
 # The stub copies /opt/kit to the Mac, and uv runs the launcher from there.
 inside '[ -f /opt/kit/src/launcher/main.py ] && [ -f /opt/kit/uv.lock ] && [ -f /opt/kit/.python-version ]' ||

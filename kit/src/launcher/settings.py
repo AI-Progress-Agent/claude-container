@@ -22,6 +22,10 @@
                       The cdp port in the repo's agent-browser.json, by
                       default. false, agent-browser drives nothing on the
                       Mac.
+  host_git_guard      whether the launcher guards git on the Mac from what
+                      the container writes. true, by default. false skips
+                      every guard: a git config or hook written inside can
+                      then run on the Mac. See plan.plan_run.
 
 A key the launcher does not know, or a value of the wrong type, stops the
 launch. The message names the file and the key.
@@ -47,6 +51,7 @@ KEYS = (
     "start_commands",
     "nested_clones",
     "agent_browser_port",
+    "host_git_guard",
 )
 
 # What compose takes as a project name.
@@ -63,6 +68,7 @@ class Settings:
     nested_clones: tuple[str, ...] = ()
     # None turns agent-browser off.
     agent_browser_port: int | None = None
+    host_git_guard: bool = True
 
 
 class SettingsError(Exception):
@@ -111,6 +117,7 @@ def load_settings(repo: str, docker_dir: str, main_clone: str) -> tuple[Settings
             start_commands=_strings(values.get("start_commands")),
             nested_clones=_strings(values.get("nested_clones")),
             agent_browser_port=port if _is_port(port) else None,
+            host_git_guard=cast(bool, values.get("host_git_guard", defaults.host_git_guard)),
         ),
         warnings,
     )
@@ -139,9 +146,9 @@ def _setting_problem(key: str, value: object) -> str | None:
                     "project_name must be a string of lower-case letters, digits, dashes and "
                     "underscores that starts with a letter or digit"
                 )
-        case "sibling_repos":
+        case "sibling_repos" | "host_git_guard":
             if not isinstance(value, bool):
-                return "sibling_repos must be true or false"
+                return f"{key} must be true or false"
         case "writable_siblings" | "start_commands" | "nested_clones":
             if not isinstance(value, list) or not all(
                 isinstance(v, str) for v in cast(list[object], value)
