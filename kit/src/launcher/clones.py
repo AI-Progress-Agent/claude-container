@@ -25,7 +25,7 @@ def main_clone(repo: str) -> str:
 
 
 def collect_sibling_repos(
-    draft: Draft, writable_siblings: list[str], *, host_git_guard: bool = True
+    draft: Draft, writable_siblings: list[str], *, host_git_guard: bool
 ) -> None:
     """Mounts the program's other repos.
 

@@ -48,7 +48,7 @@ class Watcher:
         scope: PointerScope,
         flags: FlagSet,
         helper: LocalHelper,
-        host_git_guard: bool = True,
+        host_git_guard: bool,
     ) -> None:
         self.launcher_pid = launcher_pid
         self.notify_dir = notify_dir
