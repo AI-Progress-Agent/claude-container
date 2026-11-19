@@ -117,7 +117,7 @@ def collect_folder_mounts(draft: Draft, compose_binds: Callable[[str], list[str]
     mount's root down to the read-only mount gets a mount of its own. Writes
     inside each one still work.
 
-    The read-only mounts are those in the draft. Those that compose.yaml adds
+    The read-only mounts are those in the draft. Those that compose.guard.yaml adds
     sit directly in the repo's git folder, a mount point, so they need no
     folder mounts. A folder that is already a mount point needs no new one.
     That includes a folder that a compose file mounts: a second mount there

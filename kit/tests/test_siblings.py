@@ -102,6 +102,17 @@ def test_sibling_repos_false_mounts_no_sibling(kit: Kit, this: Path) -> None:
     assert "mounted read-only" not in run.stderr
 
 
+def test_guard_off_mounts_a_writable_sibling_with_nothing_read_only(kit: Kit, this: Path) -> None:
+    kit.settings(this, writable_siblings=["rw-sibling"], host_git_guard=False)
+    run = kit.run(this)
+    assert run.returncode == 0, run.stderr
+    rw = kit.src / "rw-sibling"
+    assert run.container.has_mount(rw, ro=False)
+    assert read_only(run.container, kit, under=[rw]) == []
+    # The guard would make the missing hooks folder. Off, it makes none.
+    assert not (rw / ".git/hooks").exists()
+
+
 def test_writable_sibling_without_hooks_gets_them_made(kit: Kit, this: Path) -> None:
     """So the read-only mount has a source."""
     writable(kit, this)

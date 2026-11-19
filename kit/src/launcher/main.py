@@ -42,7 +42,7 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.write(error.output)
         return 1
     say(*warnings)
-    env = compose_env(repo, settings.project_name, home)
+    env = compose_env(repo, settings.project_name, home, host_git_guard=settings.host_git_guard)
     os.environ.update(env)
     dev = os.environ.get("KIT_DEV")
     override = None
@@ -56,7 +56,9 @@ def main(argv: list[str] | None = None) -> int:
             Path(override).write_text(dev_override_text(base))
         except OSError:
             refuse_mac_write(override)
-    compose = compose_command(KIT, docker_dir, settings.project_name, override)
+    compose = compose_command(
+        KIT, docker_dir, settings.project_name, override, host_git_guard=settings.host_git_guard
+    )
 
     program = "claude"
     match args[:1]:

@@ -65,6 +65,7 @@ def test_build_and_upgrade_build_the_image(kit: Kit, command: str, extra: list[s
     assert call.argv == [
         "compose", "-p", "app-claude", "--project-directory", str(docker),
         "-f", str(kit.cache / "claude-container/v1.2.3/compose.yaml"),
+        "-f", str(kit.cache / "claude-container/v1.2.3/compose.guard.yaml"),
         "build", *extra, "--pull",
     ]  # fmt: skip
 
@@ -79,6 +80,7 @@ def test_compose_files_stack_kit_then_repo_then_yours(kit: Kit) -> None:
     assert run.container.compose == [
         "docker", "compose", "-p", "other-claude", "--project-directory", str(docker),
         "-f", str(kit.cache / "claude-container/v1.2.3/compose.yaml"),
+        "-f", str(kit.cache / "claude-container/v1.2.3/compose.guard.yaml"),
         "-f", str(docker / "compose.repo.yaml"),
         "-f", str(docker / "compose.local.yaml"),
     ]  # fmt: skip

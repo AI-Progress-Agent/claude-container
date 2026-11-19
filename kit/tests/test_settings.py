@@ -26,6 +26,7 @@ def test_without_uv_the_launcher_names_how_to_install_it(kit: Kit) -> None:
         ("nested_clones = [1]\n", "nested_clones must be a list of strings"),
         ('writable_siblings = "plugins"\n', "writable_siblings must be a list of strings"),
         ('sibling_repos = "no"\n', "sibling_repos must be true or false"),
+        ('host_git_guard = "no"\n', "host_git_guard must be true or false"),
         (
             'sibling_repos = false\nwritable_siblings = ["plugins"]\n',
             "writable_siblings names sibling repos, but sibling_repos = false mounts none",

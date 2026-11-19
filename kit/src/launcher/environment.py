@@ -10,19 +10,19 @@ import subprocess
 from launcher import git
 
 
-def compose_env(repo: str, project_name: str, home: str) -> dict[str, str]:
+def compose_env(repo: str, project_name: str, home: str, *, host_git_guard: bool) -> dict[str, str]:
     repo_git = repo_git_dir(repo)
     # Below the clone's root, git inside stops at the repo's mount and never
     # finds the clone's .git. Nothing inside needs to write it, so it mounts
-    # read-only there.
-    prefix = git.git("-C", repo, "rev-parse", "--show-prefix")
+    # read-only there while the launcher guards git.
+    below_root = host_git_guard and bool(git.git("-C", repo, "rev-parse", "--show-prefix"))
     return {
         "PROJECT_NAME": project_name,
         "REPO": repo,
         # Not GIT_COMMON_DIR: git reads that name, and would then send every
         # git command here to this repo.
         "REPO_GIT": repo_git,
-        "REPO_GIT_MODE": "ro" if prefix else "rw",
+        "REPO_GIT_MODE": "ro" if below_root else "rw",
         "HOST_HOME": home,
         "HOST_USER": pwd.getpwuid(os.getuid()).pw_name,
         # Claude names a project's folder under ~/.claude/projects after its

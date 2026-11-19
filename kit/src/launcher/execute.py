@@ -62,6 +62,7 @@ def execute(plan: RunPlan, compose: list[str], helper: LocalHelper) -> NoReturn:
                 scope=plan.pointers,
                 flags=flags,
                 helper=helper,
+                host_git_guard=plan.host_git_guard,
             )
         )
     except BaseException:

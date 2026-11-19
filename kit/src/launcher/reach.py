@@ -63,7 +63,7 @@ class Reach:
                 real = real_dir(mount.target)
                 if real is not None and real != mount.target:
                     read_only.append(real)
-        # compose.yaml mounts these two.
+        # compose.guard.yaml mounts these two.
         real = real_dir(draft.repo_git)
         if real is not None:
             read_only += [f"{real}/hooks", f"{real}/config"]

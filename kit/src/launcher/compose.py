@@ -13,17 +13,26 @@ DEV_IMAGE = "claude-container:dev"
 
 
 def compose_command(
-    kit: str, docker_dir: str, project_name: str, dev_override: str | None
+    kit: str,
+    docker_dir: str,
+    project_name: str,
+    dev_override: str | None,
+    *,
+    host_git_guard: bool,
 ) -> list[str]:
-    """docker compose with the kit's compose file and the repo's.
+    """docker compose with the kit's compose files and the repo's.
 
     Relative paths in the repo's files resolve against its docker folder, as
-    they would if the kit's file sat there too. -p names the project.
+    they would if the kit's files sat there too. -p names the project.
     Without it, a COMPOSE_PROJECT_NAME in your shell would win over
     compose.yaml's name, and two repos could share one login.
+    compose.guard.yaml mounts the repo's .git/hooks and .git/config
+    read-only. It joins only while the launcher guards git.
     """
     command = ["docker", "compose", "-p", project_name, "--project-directory", docker_dir]
     command += ["-f", f"{kit}/compose.yaml"]
+    if host_git_guard:
+        command += ["-f", f"{kit}/compose.guard.yaml"]
     for name in ("compose.repo.yaml", "compose.local.yaml"):
         if os.path.isfile(f"{docker_dir}/{name}"):
             command += ["-f", f"{docker_dir}/{name}"]

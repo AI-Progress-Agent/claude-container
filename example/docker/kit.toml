@@ -18,3 +18,7 @@ start_commands = []
 # Clones and bare repos kept inside the repo on purpose, by their paths in
 # the repo. A clone inside a writable sibling goes by its absolute path.
 nested_clones = []
+
+# Whether the launcher guards git on the Mac from what the container writes.
+# false lets a git config or hook written inside run on the Mac.
+host_git_guard = true

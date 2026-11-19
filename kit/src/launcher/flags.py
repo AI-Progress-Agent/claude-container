@@ -29,7 +29,7 @@ def guarded_files(draft: Draft) -> list[str]:
 
     A guarded file mounts read-only on its own inside a writable mount. The
     mount's source is a file, and its target sits inside a writable mount.
-    compose.yaml mounts the repo's .git/config that way too.
+    compose.guard.yaml mounts the repo's .git/config that way too.
     A folder, such as hooks, needs no flag: a write to .git/HOOKS lands in
     the read-only mount. A file mounted twice, at its real path and at the
     repo's path as typed, counts once.

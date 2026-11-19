@@ -24,7 +24,7 @@ import os
 
 from launcher import git
 from launcher.draft import Disk, Draft
-from launcher.paths import absolute_path, children, is_under, real_dir
+from launcher.paths import absolute_path, children, is_under, is_under_any, real_dir
 
 
 def collect_worktree_mounts(draft: Draft, folder: str) -> None:
@@ -40,6 +40,25 @@ def collect_worktree_mounts(draft: Draft, folder: str) -> None:
     guard_git_dir(draft, common, real, folder)
     for module in submodule_git_dirs(common):
         guard_whole_git_dir(draft, module, real, folder)
+
+
+def collect_worktree_files(draft: Draft) -> None:
+    """Mounts read-only each worktree's .git file that no writable mount holds.
+
+    This is for a launcher that does not guard git. The worktrees are those
+    of the repo and of each writable sibling. Without the file, git inside
+    takes a worktree it cannot see for a deleted one, as the module's
+    docstring says. A file inside a writable mount is already in view, so it
+    stays writable.
+    """
+    writable = draft.writable_mounts()
+    for folder in [draft.repo, *draft.writable_dirs]:
+        if git.common_dir(folder) is None:
+            continue
+        for worktree in git.worktrees("-C", folder):
+            file = f"{worktree}/.git"
+            if os.path.isfile(file) and not is_under_any(file, writable):
+                draft.mount(file, read_only=True)
 
 
 def guard_clone(draft: Draft, clone: str) -> None:
@@ -100,7 +119,7 @@ def guard_git_dir(draft: Draft, git_dir: str, real: str, typed: str) -> None:
 def guard_whole_git_dir(draft: Draft, git_dir: str, real: str, typed: str) -> None:
     """Mounts read-only the hooks and config of git_dir, then guards it as guard_git_dir does.
 
-    This is for a git folder that compose.yaml and guard_clone do not mount,
+    This is for a git folder that compose.guard.yaml and guard_clone do not mount,
     such as a submodule's. A missing hooks folder would become an empty one
     the container could fill, so it is made on the Mac first. So is a missing
     config, as an empty file.

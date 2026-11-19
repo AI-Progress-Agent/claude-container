@@ -24,7 +24,9 @@ def main_clone(repo: str) -> str:
     return os.path.dirname(common) if common is not None else repo
 
 
-def collect_sibling_repos(draft: Draft, writable_siblings: list[str]) -> None:
+def collect_sibling_repos(
+    draft: Draft, writable_siblings: list[str], *, host_git_guard: bool = True
+) -> None:
     """Mounts the program's other repos.
 
     Each folder next to the main clone that is a clone itself, with an origin
@@ -35,10 +37,11 @@ def collect_sibling_repos(draft: Draft, writable_siblings: list[str]) -> None:
     .claude/worktrees or elsewhere.
 
     A sibling named in writable_siblings mounts writable instead, with its
-    .git/hooks and .git/config read-only, as compose.yaml mounts this repo's.
-    Git runs commands from both, so a write there from the container would
-    run on the Mac. The files that lead its worktrees to them mount read-only
-    too. Each one joins writable_dirs.
+    .git/hooks and .git/config read-only, as compose.guard.yaml mounts this
+    repo's. Git runs commands from both, so a write there from the container
+    would run on the Mac. The files that lead its worktrees to them mount
+    read-only too. With host_git_guard false, none of those mount. Each one
+    joins writable_dirs.
     """
     main = main_clone(draft.repo)
     own = _origin_owner(main)
@@ -54,7 +57,8 @@ def collect_sibling_repos(draft: Draft, writable_siblings: list[str]) -> None:
         name = os.path.basename(folder)
         if name in writable_siblings:
             draft.mount(folder, read_only=False)
-            guard_clone(draft, folder)
+            if host_git_guard:
+                guard_clone(draft, folder)
             draft.writable_dirs.append(folder)
             writable.append(name)
         else:

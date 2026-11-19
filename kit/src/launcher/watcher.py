@@ -13,7 +13,7 @@ watcher ends the session.
 Every tenth pass, about every 5 seconds, it also moves aside each file that
 could lead git on the Mac to hooks or a config written inside, and each
 hooks folder that has no read-only mount. A full search of the repo takes
-too long to run on every pass.
+too long to run on every pass. With host_git_guard false, it moves nothing.
 """
 
 from __future__ import annotations
@@ -48,10 +48,12 @@ class Watcher:
         scope: PointerScope,
         flags: FlagSet,
         helper: LocalHelper,
+        host_git_guard: bool = True,
     ) -> None:
         self.launcher_pid = launcher_pid
         self.notify_dir = notify_dir
         self.scope = scope
+        self.host_git_guard = host_git_guard
         self.flags = flags
         self.helper = helper
         self.blocked: list[str] = []
@@ -146,6 +148,8 @@ class Watcher:
         return cwd
 
     def _block(self) -> None:
+        if not self.host_git_guard:
+            return
         self.blocked += block_git_pointers(self.scope, self._notify_text)
         self.blocked += block_hooks_folders(self.scope, self._notify_text)
 
